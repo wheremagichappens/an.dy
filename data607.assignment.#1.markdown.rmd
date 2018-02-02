@@ -1,0 +1,106 @@
+---
+title: "data607.Assignment#1."
+author: "Sang Yoon (Andy) Hwang"
+date: "February 1, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###Getting the data
+
+```{r get_data}
+
+theURL <- "https://archive.ics.uci.edu/ml/machine-learning-databases/mushroom/agaricus-lepiota.data"
+mushrooms <- read.table(theURL, header = FALSE,  sep = ",", stringsAsFactors = FALSE)
+names(mushrooms) <-c("class","cap-shape","cap-surface","cap-color","bruises","odor","gill-attachment","gill-spacing","gill-size","gill-color","stalk-shape","stalk-root","stalk-surface-above-ring","stalk-surface-below-ring","stalk-color-above-ring","stalk-color-below-ring","veil-type","veil-color","ring-number","ring-type","spore-print-color","population","habitat")
+
+```
+
+###Subsetting the data
+
+```{r sub_data}
+
+mushrooms <- mushrooms[c(1:4, 22)]
+head(mushrooms)
+```
+
+###Data replacement
+
+```{r rep_data}
+
+#function replacing class column data sets
+rep_class <- function(x){
+  switch (x,
+          'p' = 'poisonous',
+          'e' = 'edible'
+ )
+}
+
+#function replacing cap-shape column data sets
+rep_capshape <- function(x){
+  switch (x,
+          'b' = 'bell',
+          'c' = 'conical',
+          'x' = 'convex',
+          'f' = 'flat',
+          'k' = 'knobbed',
+          's' = 'sunken'
+  )
+}
+
+#function replacing cap-surface column data sets
+rep_capsurface <- function(x){
+  switch (x,
+          'f' = 'fibrous',
+          'g' = 'grooves',
+          'y' = 'scaly',
+          's' = 'smooth'
+  )
+}
+
+#function replacing cap-color column data sets
+rep_capcolor <- function(x){
+  switch (x,
+          'n' = 'brown',
+          'b' = 'buff',
+          'c' = 'cinnamon',
+          'g' = 'gray',
+          'r' = 'green',
+          'p' = 'pink',
+          'u' = 'purple',
+          'e' = 'red',
+          'w' = 'white',
+          'y' = 'yellow'
+  )
+}
+
+#function replacing population column data sets
+rep_pop <- function(x){
+  switch (x,
+          'a' = 'abundant',
+          'c' = 'clustered',
+          'n' = 'numerous',
+          's' = 'scattered',
+          'v' = 'several',
+          'y' = 'solitary'
+  )
+}
+
+```
+###Applying data replacement
+
+```{r app_data}
+names(mushrooms)
+
+mushrooms$class <-sapply(mushrooms$class, rep_class)
+mushrooms$`cap-shape` <-sapply(mushrooms$`cap-shape`, rep_capshape)
+mushrooms$`cap-surface` <-sapply(mushrooms$`cap-surface`, rep_capsurface)
+mushrooms$`cap-color` <-sapply(mushrooms$`cap-color`, rep_capcolor)
+mushrooms$population <-sapply(mushrooms$population, rep_pop)
+
+mushrooms
+
+```
