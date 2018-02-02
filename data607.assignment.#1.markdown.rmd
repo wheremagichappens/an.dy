@@ -22,8 +22,8 @@ names(mushrooms) <-c("class","cap-shape","cap-surface","cap-color","bruises","od
 ###Subsetting the data
 
 ```{r sub_data}
-
-mushrooms <- mushrooms[c(1:4, 22)]
+###150 rows with 5 selected columns
+mushrooms <- mushrooms[1:150, c(1:4, 22)]
 head(mushrooms)
 ```
 
