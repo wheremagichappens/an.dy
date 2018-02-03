@@ -1,7 +1,7 @@
 ---
 title: "data607.Assignment#1."
 author: "Sang Yoon (Andy) Hwang"
-date: "February 1, 2018"
+date: "February 2, 2018"
 output: html_document
 ---
 
@@ -18,7 +18,7 @@ mushrooms <- read.table(theURL, header = FALSE, sep = ",", stringsAsFactors = FA
 write.table(mushrooms, "mushroom.csv", sep = ",", row.names = FALSE)
 
 ##Use RawGithub to retreive table
-theURL <- "https://raw.githubusercontent.com/wheremagichappens/an.dy/master/mushroom.csv"
+theURL <- "https://raw.githubusercontent.com/wheremagichappens/an.dy/master/DATA607/mushroom.csv"
 mushrooms <- read.table(theURL, header = TRUE, sep= ",", stringsAsFactors = FALSE)
 
 
