@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 Imported CSV file from GitHub that was originally exported from MySQL
 
 ```{r rating}
-theURL <- "https://raw.githubusercontent.com/wheremagichappens/an.dy/master/DATA607/rating.csv"
+theURL <- "https://raw.githubusercontent.com/wheremagichappens/an.dy/master/DATA607/Assignment-2/rating.csv"
 
 rating <- read.table(theURL, header = FALSE, sep = ",", stringsAsFactors = FALSE)
 names(rating) <-c("name","title","rating")
