@@ -59,7 +59,7 @@ select * from movie_title;
 
 
 select b.name, c.title, a.rating
-INTO OUTFILE 'C:/ProgramData/MySQL/MySQL Server 5.7/Uploads/rating4.csv'
+INTO OUTFILE 'C:/ProgramData/MySQL/MySQL Server 5.7/Uploads/rating.csv'
 FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
 ESCAPED BY '\\'
 LINES TERMINATED BY '\n'
