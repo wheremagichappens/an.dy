@@ -1,0 +1,102 @@
+---
+title: "DATA607. Project#1"
+author: "Sang Yoon (Andy) Hwang"
+date: "February 22, 2018"
+output: html_document
+---
+
+```{r q}
+#Get the .txt file from GitHub
+url <- "https://raw.githubusercontent.com/wheremagichappens/an.dy/master/DATA607/Project1/tournamentinfo.txt"
+chess <- read.delim(url, header = FALSE, stringsAsFactors = FALSE)
+head(chess)
+
+#Deliminating "-" sign
+library(stringr)
+chess_clean <- data.frame(str_replace_all(chess$V1,"-",""))
+
+#Removing blank lines
+chess_clean <- data.frame(chess_clean[!apply(chess_clean == "", 1, all),])
+head(chess_clean)
+
+#Merging 2 rows to align with column names and insert result into new data.frame
+chess_new <- data.frame(c())
+for (i in 1:dim(chess_clean)[1]){
+ if (i %% 2 == 1) {
+  data1 <- rbind(chess_new$data1, as.character(chess_clean[i,1]))
+  data2 <- as.character(chess_clean[i+1,1])
+  merged <- data.frame(paste0(data1,data2))
+  chess_new <- rbind(chess_new, merged)
+  }
+}
+
+#Checking dimension of new data.frame to make sure merging is successfully done.
+dim(chess_new)
+head(chess_new)
+
+#Still, I need to seperate column by "|". To do that, I set up column names for new data.frame to do separation.
+library(tidyr)
+chess_new_col <- c("Pair","Player Name","Total","Round 1","Round 2","Round 3", "Round 4","Round 5","Round 6","Round 7","State","USCF ID / Rtg (Pre->Post)","Pts","1","2","3","4","5","6","7","Avg.Pre Rating")
+
+chess_new_2 <- separate(chess_new, col = paste0.data1..data2., into = chess_new_col,  sep ="\\|")
+nrow(chess_new_2)
+
+#Note that I have 2 column names as a result of separation. Will have to remove first row to avoid duplication.
+chess_new_2 <- chess_new_2[c(2:nrow(chess_new_2)),]
+
+#Note that "USCF ID / Rtg (Pre->Post)" column needs to be separated. Will have to speparate 2 different columns by "/"
+chess_new_2["USCF ID / Rtg (Pre->Post)"]
+tidy <- separate(chess_new_2, col = "USCF ID / Rtg (Pre->Post)", into = c("USCF ID", "Rtg (Pre->Post)"), sep = "\\/")
+head(tidy)
+
+#More cleaning. "Rtg (Pre->Post)" needs to be separated by ">"
+tidy2 <- separate(tidy, col = "Rtg (Pre->Post)", into = c("Rtg-Pre", "Rtg-Post"), sep = "\\>")
+
+#Use regex to extract numeric values only
+tidy2$'Rtg-Pre' <- as.numeric(str_extract_all(tidy2$`Rtg-Pre`,"\\b\\d{1,}"))
+tidy2$'Rtg-Post' <- as.numeric(str_extract_all(tidy2$`Rtg-Post`,"\\b\\d{1,}"))
+
+#In order to calculate average rating, we need numeric values from Round 1 to 7 and convert them into numeric.
+tidy2$'round1_clean' <- as.numeric(str_extract_all(tidy2$`Round 1`,"\\b\\d{1,}"))
+tidy2$'round2_clean' <- as.numeric(str_extract_all(tidy2$`Round 2`,"\\b\\d{1,}"))
+tidy2$'round3_clean' <- as.numeric(str_extract_all(tidy2$`Round 3`,"\\b\\d{1,}"))
+tidy2$'round4_clean' <- as.numeric(str_extract_all(tidy2$`Round 4`,"\\b\\d{1,}"))
+tidy2$'round5_clean' <- as.numeric(str_extract_all(tidy2$`Round 5`,"\\b\\d{1,}"))
+tidy2$'round6_clean' <- as.numeric(str_extract_all(tidy2$`Round 6`,"\\b\\d{1,}"))
+tidy2$'round7_clean' <- as.numeric(str_extract_all(tidy2$`Round 7`,"\\b\\d{1,}"))
+
+#"Rtg-Pre" values matching with each round1 to 7 (numeric values) will be required for average rating calculation. Put these matches in R1 to R7.
+tidy2$'R1' <- tidy2$`Rtg-Pre`[tidy2$'round1_clean']
+tidy2$'R2' <- tidy2$`Rtg-Pre`[tidy2$'round2_clean']
+tidy2$'R3' <- tidy2$`Rtg-Pre`[tidy2$'round3_clean']
+tidy2$'R4' <- tidy2$`Rtg-Pre`[tidy2$'round4_clean']
+tidy2$'R5' <- tidy2$`Rtg-Pre`[tidy2$'round5_clean']
+tidy2$'R6' <- tidy2$`Rtg-Pre`[tidy2$'round6_clean']
+tidy2$'R7' <- tidy2$`Rtg-Pre`[tidy2$'round7_clean']
+
+head(tidy2)
+
+#Filter out necessary columns for our purpose.
+chess_new_3 <- tidy2[c(1,2,3,11, 13,14,31,32,33,34,35,36,37,23)]
+
+head(chess_new_3)
+
+#Calculate average rating with information we have.
+avg_rating <- rowMeans(chess_new_3[,7:13], na.rm = TRUE)
+chess_new_3$'Avg.Pre Rating' = round(avg_rating)
+
+#Well, looking at the structure of table, we still need to trim some of the column. Life as a cleaner is almost over!
+str(chess_new_3)
+chess_new_3$Pair <- trimws(chess_new_3$Pair)
+chess_new_3$`Player Name` <- trimws(chess_new_3$`Player Name`)
+chess_new_3$Total <- trimws(chess_new_3$Total)
+chess_new_3$State <- trimws(chess_new_3$State)
+
+#Looks clean and our cleaning job is done!
+str(chess_new_3)
+head(chess_new_3)
+
+
+#Export CSV
+write.table(chess_new_3, file = "ahwang-tournamentInfo.csv",row.names=FALSE, na="",col.names=TRUE, sep=",")
+```
