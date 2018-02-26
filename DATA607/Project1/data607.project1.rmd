@@ -101,5 +101,5 @@ chess_final <- chess_new_3[c(2,4,3,5,14)]
 head(chess_final)
 
 #Export CSV
-write.table(chess_final, file = "ahwang-tournamentInfo.csv",row.names=FALSE, na="",col.names=TRUE, sep=",")
+write.csv(chess_final, file = "ahwang-tournamentInfo.csv",row.names=FALSE, na="",col.names=TRUE, sep=",")
 ```
