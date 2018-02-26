@@ -89,7 +89,7 @@ chess_new_3$'Avg.Pre Rating' = round(avg_rating)
 str(chess_new_3)
 chess_new_3$Pair <- trimws(chess_new_3$Pair)
 chess_new_3$`Player Name` <- trimws(chess_new_3$`Player Name`)
-chess_new_3$Total <- trimws(chess_new_3$Total)
+chess_new_3$`Total Pts.` <- trimws(chess_new_3$`Total Pts.`)
 chess_new_3$State <- trimws(chess_new_3$State)
 
 #Looks clean and our cleaning job is done!
