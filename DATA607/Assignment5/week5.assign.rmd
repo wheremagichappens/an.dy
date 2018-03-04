@@ -28,7 +28,7 @@ You may refer to RMD file in my github to see the details.
 ```{r prepare, include = FALSE}
 ##MySQL connection
 library(RMySQL)
-mydb = dbConnect(MySQL(), user='root', password='Qlqjs1123!', dbname='airlines', host='127.0.0.1')
+mydb = dbConnect(MySQL(), user='', password='', dbname='airlines', host='')
 ```
 
 ``` {r lib, include = FALSE}
