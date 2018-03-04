@@ -1,0 +1,205 @@
+---
+title: "Week5.assignment.DATA607."
+author: "Sang Yoon (Andy) Hwang"
+date: "March 1, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+I retrieved data from MySQL.
+
+For security purpose, I blanked password, userID and host.
+Actual codes for MySQL connection are written like:
+
+
+install.packages("RMySQL")
+
+library(RMySQL)
+
+mydb = dbConnect(MySQL(), user='', password='', dbname='airlines', host='')
+
+
+You may refer to RMD file in my github to see the details.
+
+
+
+```{r prepare, include = FALSE}
+##MySQL connection
+library(RMySQL)
+mydb = dbConnect(MySQL(), user='root', password='Qlqjs1123!', dbname='airlines', host='127.0.0.1')
+```
+
+``` {r lib, include = FALSE}
+##Prepare for data manipulation
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r q}
+dbListTables(mydb)
+
+flight <- dbGetQuery(mydb, 'select c.carrier_name, b.status_name, a.Los_Angeles, a.Phoenix, a.San_Diego, a.San_Francisco, a.Seattle
+from carrier_flight_count a
+join carrier_status b on a.status_id = b.status_id
+join carrier_airlines c on a.carrier_id = c.carrier_id')
+```
+
+```{r qq}
+sorted <- gather(flight, "city", "count", 3:7)
+sorted
+
+sorted_2 <- spread(sorted, status_name, count)
+sorted_2
+
+str(sorted_2)
+```
+
+#Road map of analysis
+
+Q1. Get total delay by carriers and compare. Get proportion of delay by carriers and compare.
+
+Q2. Get total delay by cities and compare. Get proportion of delay by cities and compare.
+
+Q3. Get total delay by carriers broken down by cities and compare. Get proportion of delay by carriers broken down by cities and compare.
+
+Conclusion. Summarize the findings.
+
+#Q1. summary by carrier
+
+```{r q1}
+
+carriers <- group_by(sorted_2, carrier_name)
+
+summary_carriers <- summarize(
+  carriers, 
+  sum_delayed = sum(delayed),
+  sum_on_time = sum(on_time), 
+  total_flights = sum_delayed + sum_on_time,
+  avg_delayed = mean(delayed),
+  avg_on_time = mean(on_time),
+  sd_delayed = sd(delayed),
+  sd_on_time = sd(on_time),
+  prop_delayed = round(sum_delayed / total_flights,2)
+)
+
+data.frame(summary_carriers)
+
+
+ggplot(summary_carriers, aes(carrier_name, prop_delayed)) + 
+  geom_bar(aes(fill = carrier_name), position = "dodge", stat = "identity") + 
+  ylab("Prop. Delayed")
+
+```
+
+AM West has larger total number of flights than Alaska.
+Because of this, proportion of delayed flight between 2 carriers serves as much better indication when it comes to comparing who is doing better or worse.
+From the result above, Alaska has larger prop_delayed. However, we see that avg_delayed and sd_delayed for Alaska are all lower than AM West.
+At the same time, avg_on_time and sd_on_time for Alaska are all lower than AM West.
+As you can see, since variables are conflicting each other (counter-intuitive), it is hard to tell which carrier is doing better in general. 
+However, when we talk about "managing overall delayed flights", we have to focus on prop_delayed mianly. Therefore, I would say AM West is doing better, at least in grouping by carrier_name.
+
+#Q2. summary by city
+
+```{r q2}
+
+cities <- group_by(sorted_2, city)
+
+summary_city <- summarize(
+  cities, 
+  sum_delayed = sum(delayed),
+  sum_on_time = sum(on_time), 
+  total_flights = sum_delayed + sum_on_time,
+  avg_delayed = mean(delayed),
+  avg_on_time = mean(on_time),
+  sd_delayed = sd(delayed),
+  sd_on_time = sd(on_time),
+  prop_delayed = round(sum_delayed / total_flights,2)
+)
+
+data.frame(summary_city)
+
+
+ggplot(summary_city, aes(city, prop_delayed)) + 
+  geom_bar(aes(fill = city), position = "dodge", stat = "identity") + 
+  ylab("Prop. Delayed")
+```
+
+From summary_city, we know that Pheonix has the lowest prop_delayed where as San Francisco has the highest prop_delayed.
+We should particularly focus on Seattle and Pheonix as sd_delayed and sd_on_time are unusually large.
+
+Let's now see how prop_delayed, grouping by carrier_name, will change if we get rid of Seattle and Pheonix (outliers) 
+
+```{r q22}
+
+filt_city <- filter(sorted_2, city != 'Seattle' & city != 'Phoenix' )
+filt_city
+
+
+carrier <- group_by(filt_city, carrier_name)
+
+summary_carriers_filt <- summarize(
+  carrier, 
+  sum_delayed = sum(delayed),
+  sum_on_time = sum(on_time), 
+  total_flights = sum_delayed + sum_on_time,
+  avg_delayed = mean(delayed),
+  avg_on_time = mean(on_time),
+  sd_delayed = sd(delayed),
+  sd_on_time = sd(on_time),
+  prop_delayed = round(sum_delayed / total_flights,2)
+)
+
+
+data.frame(summary_carriers_filt)
+
+```
+
+Indeed, Alaska has lower prop_delayed once we get rid of 2 outliers.
+Before we jump the gun, We need to ask, is it really ok to exclude these 2 cities? Well, we need to be careful.
+In my opinon, excluding 2 cities, just because they look like outliers, is not a very logical approach.
+In business logic, it could be true that some cities prefer specific carriers to other carriers and it is a general norm.
+Thus, we should not rule out 2 cities when we are comparing OVERALL prop_delayed in 2 carriers.
+Therefore, my conclusion of analysis will be based on all 5 cities, not 3 cities.
+
+#Q3. summary by carrier and city
+
+```{r q3}
+
+sorted_3 <- mutate(sorted_2, total_flights = delayed + on_time, prop_delayed = round (delayed / (delayed + on_time),2))
+sorted_3
+
+summary(sorted_3)
+
+ggplot(sorted_3, aes(city, prop_delayed)) + 
+  geom_bar(aes(fill = carrier_name), position = "dodge", stat = "identity") + 
+  ylab("Prop. Delayed")
+
+```
+
+Using sorted_3, we can see that total_flights in Seattle and Pheonix exceed 1100 (mean of total flights) and definately outliers.
+Note that 2146 (Seattle) total flights belong to Alaska and 5255 (Pheonix) total fights belong to AM West alone. This shows why sd_delayed and sd_on_time were unsually large for these 2 cities.
+Not only that, in each every city, Alaska's prop_delayed is lower than AM West's.
+Given that Pheonix had the lowest prop_delayed among 5 cities and Seattle had 2nd largest prop_delayed in general, from summary_city, it is no surprise that prop_delayed is lower in AM west as Pheonix is the largest total_flights for AM West where as Seattle, the 2nd largest prop_delayed city, is the largest portion of total flights for Alaska.
+
+
+#conclusion: Which carrier is doing better in "managing delayed flights" in general?
+
+That is hard to tell since each carrier has comparative advantage from one another. 
+
+When it comes to grouping by carrier_name, we can say that AM West is doing better in "managing OVERALL delayed flights" and Alaska is doing better in "managing delayed flights ON AVERAGE"
+
+```{r qqq}
+data.frame(summary_carriers)
+```
+When it comes to grouping by carrier_name and city, we can say that Alaska is doing better in "managing delayed flights by CITY"
+
+```{r qqqq}
+data.frame(sorted_3)
+```
+#Things that need to be adjusted
+If we really do want to understand which carriers are doing better in "managing delayed flights" in general, we have to consider other confounding variables such as weather, skills of pilots and airport road conditions and etc.
+From summary_city, we can see that some cities happened to have higher or lower prop_delayed for unknown reason (Pheonix and San Francisco). It seems that number of flights in these cities are affected by confounding variables.
+Not only that, we know that each carrier tends to be "skwed" to particular city, Alaska to Seattle and AM West to Phoenix, overall prop_delayed variable could be a bit biased.
