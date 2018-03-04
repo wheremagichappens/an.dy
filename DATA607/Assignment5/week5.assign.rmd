@@ -67,6 +67,10 @@ Q3. Get total delay by carriers broken down by cities and compare. Get proportio
 
 Conclusion. Summarize the findings.
 
+#Techniques used for analysis
+
+I will use summarize, group_by, ggplot, mutate and etc to transform the data. 
+
 #Q1. summary by carrier
 
 ```{r q1}
@@ -199,6 +203,7 @@ When it comes to grouping by carrier_name and city, we can say that Alaska is do
 ```{r qqqq}
 data.frame(sorted_3)
 ```
+
 #Things that need to be adjusted
 If we really do want to understand which carriers are doing better in "managing delayed flights" in general, we have to consider other confounding variables such as weather, skills of pilots and airport road conditions and etc.
 From summary_city, we can see that some cities happened to have higher or lower prop_delayed for unknown reason (Pheonix and San Francisco). It seems that number of flights in these cities are affected by confounding variables.
