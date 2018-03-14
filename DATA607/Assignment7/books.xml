@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<books>
+    <book id="1">
+        <Title>The Death of Ivan Ilyich</Title>
+        <Author>Leo Tolstoy</Author>
+        <Genre>Fiction</Genre>
+        <Country_Origin>Russia</Country_Origin>
+        <Year_Published>1886</Year_Published>
+    </book>
+    <book id="2">
+        <Title>Harry Potter and the Philosopher's Stone</Title>
+        <Author>J. K. Rowling</Author>
+        <Genre>Fantasy</Genre>
+        <Country_Origin>United Kingdom</Country_Origin>
+        <Year_Published>1997</Year_Published>
+    </book>
+    <book id="3">
+        <Title>Let it Snow</Title>
+        <Author>John Green, Maureen Johnson, Lauren Myracle</Author>
+        <Genre>Romance</Genre>
+        <Country_Origin>United States</Country_Origin>
+        <Year_Published>2008</Year_Published>
+    </book>
+</books>
