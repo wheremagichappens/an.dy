@@ -1,0 +1,193 @@
+---
+title: "data607.Proj#2"
+author: "Sang Yoon (Andy) Hwang"
+date: "March 13, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Data Origins
+
+https://data.world/ryanes/liverpool-english-league-matches
+Liverpool match data set
+
+http://www.imf.org/external/pubs/ft/weo/2017/02/weodata/weoselser.aspx?c=512%2c946%2c914%2c137%2c612%2c546%2c614%2c962%2c311%2c674%2c213%2c676%2c911%2c548%2c193%2c556%2c122%2c678%2c912%2c181%2c313%2c867%2c419%2c682%2c513%2c684%2c316%2c273%2c913%2c868%2c124%2c921%2c339%2c948%2c638%2c943%2c514%2c686%2c218%2c688%2c963%2c518%2c616%2c728%2c223%2c836%2c516%2c558%2c918%2c138%2c748%2c196%2c618%2c278%2c624%2c692%2c522%2c694%2c622%2c142%2c156%2c449%2c626%2c564%2c628%2c565%2c228%2c283%2c924%2c853%2c233%2c288%2c632%2c293%2c636%2c566%2c634%2c964%2c238%2c182%2c662%2c359%2c960%2c453%2c423%2c968%2c935%2c922%2c128%2c714%2c611%2c862%2c321%2c135%2c243%2c716%2c248%2c456%2c469%2c722%2c253%2c942%2c642%2c718%2c643%2c724%2c939%2c576%2c644%2c936%2c819%2c961%2c172%2c813%2c132%2c726%2c646%2c199%2c648%2c733%2c915%2c184%2c134%2c524%2c652%2c361%2c174%2c362%2c328%2c364%2c258%2c732%2c656%2c366%2c654%2c734%2c336%2c144%2c263%2c146%2c268%2c463%2c532%2c528%2c944%2c923%2c176%2c738%2c534%2c578%2c536%2c537%2c429%2c742%2c433%2c866%2c178%2c369%2c436%2c744%2c136%2c186%2c343%2c925%2c158%2c869%2c439%2c746%2c916%2c926%2c664%2c466%2c826%2c112%2c542%2c111%2c967%2c298%2c443%2c927%2c917%2c846%2c544%2c299%2c941%2c582%2c446%2c474%2c666%2c754%2c668%2c698%2c672&t=193
+IMF price analysis data set
+
+http://stats.oecd.org/Index.aspx?DataSetCode=CPL
+OECD price analysis data set
+
+```{r library, include=FALSE}
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+```
+
+```{r q1}
+#1st data set
+#IMF PPP price data set
+#The data set is based on 1980 to 2018 PPP price comparison for 193 countries.
+
+path <- 'https://raw.githubusercontent.com/wheremagichappens/an.dy/master/DATA607/Project2/IMF.txt'
+dataset1 <- read.csv(path, header = TRUE, sep = '\t', stringsAsFactors = FALSE)
+head(dataset1)
+str(dataset1)
+colnames(dataset1)
+
+###Used gather, conversion from character to numeric (gsub), subset, spread, rename, mutate and etc to perform the analysis.
+sorted <- gather(dataset1, "year", "value", 6:44)
+str(sorted)
+
+sorted$value <- as.numeric(gsub(",","", sorted$value))
+sorted$year <- as.numeric(gsub("X","", sorted$year))
+
+sorted <- sorted[-c(4:6)]
+str(sorted)
+
+sorted <- subset(sorted, Units %in% c("U.S. dollars","National currency", "Purchasing power parity; international dollars"))
+str(sorted)
+
+sorted <- spread(sorted, Units, value)
+sorted <- rename(sorted, PPP = "Purchasing power parity; international dollars", NC = "National currency")
+str(sorted)
+
+sorted <- mutate(sorted, exchange_rate = sorted$NC/ sorted$'U.S. dollars' , ppp_rate = sorted$NC/sorted$PPP, price_valuation = ( (exchange_rate - ppp_rate) / exchange_rate ) * 100)
+head(sorted)
+
+#NOTE
+#We do have some N/As in our data set but it is ok for our purpose. We can leave them as they are.
+
+#BACKGROUND
+#According to economists, PPP rate is a theoretical exchange rate that measures the price difference between a country and United States.
+#$1 in U.S can either purchase more/less/the same amount of goods and services in other country. (citation: http://www.oecd.org/sdd/prices-ppp/purchasingpowerparities-frequentlyaskedquestionsfaqs.htm)
+##citizens in a country where ppp_rate is higher than exchange_rate has lower purchasing power in their country than in U.S for the same $1 spent; negative price_valuation
+##citizens in a country where ppp_rate is lower than exchange_rate has higher purchasing power in their country than in U.S for the same $1 spent; positive price_valuation
+##Therefore, under/over-estimation of exchange rate (NC/U.S. dollars) can roughly estimate the price level difference accross the countries.
+
+##If price_valuation is negative (%), a country's general price level is higher (%) than United States.
+##If price_valuation is positive (%), a country's general price level is lower (%) than United States.
+##Note that United States has always price_valuation = 0 because the base comparision always will be U.S to other countries.
+sorted[which(sorted$Country =="United States"),]
+
+##ANALYSIS
+##Find out country that experienced biggest under/over-price valuation
+
+#General price level is 97.79% cheaper than U.S in 1992 (Armenia); most under-priced country against U.S
+sorted[which.max(sorted$price_valuation),]
+
+#General price level is 396.86% higher than U.S in 1982 (Ghana); most over-priced country against U.S
+sorted[which.min(sorted$price_valuation),]
+```
+
+```{r q2}
+#2nd data set
+#OECD PPP price data set
+#The data set is based on 2016 PPP price comparison for OECD member states.
+path2 <- 'https://raw.githubusercontent.com/wheremagichappens/an.dy/master/DATA607/Project2/OECD.csv'
+dataset2 <- read.csv(path2, header = TRUE, stringsAsFactors = FALSE)
+
+str(dataset2)
+head(dataset2)
+
+###Used select, spread, nrow and etc to perform the analysis.
+
+#Transformed matrix into necessary format in order to view the data easily. I want to compare how much each country is under/over-priced against U.S.
+#100 in each column means the base currency and the base country is the same. (Country = USA, USA = 100 means Country being compared to USA is USA, thus price level is the same)
+sorted2 <- select(dataset2, Country, CPL_COUNTRY, Value)
+sorted2 <- spread(sorted2, CPL_COUNTRY, Value)
+sorted2 <- sorted2[c('Country', 'USA')]
+str(sorted2)
+
+sorted2
+
+#ANALYSIS
+#Want to know if IMF and OECD have same logic when it comes to measuring relative price difference comparing U.S to other countries.
+#sorted$USA > 100 means showing any country that has higher price level than U.S.
+
+sorted2 <- sorted2[which(sorted2$USA > 100),]
+nrow(sorted2)
+
+#Just to confirm, there are several countries that are relatively more expensive than U.S, 17 countries.
+#Note that compared to IMF data, we know that Australia is indeed relatively more expensive than U.S in 2016 (6.2% more expensive)
+#The figure in OECD suggests that Australia should be 27% more expensive than U.S, (National Currency per U.S $), in 2016. Obviously, there is a difference as each institution uses different baskets of goods when it comes calculating price difference.
+
+sorted[which(sorted$Country =="Australia" & sorted$year == 2016),]
+
+#However, we should note that each institution is roughly measuring the relative price difference between U.S and other countries fairly well. Which institution is more accurate? OECD Vs IMF? It depends on how you look at it.
+##OECD methodology = http://stats.oecd.org/Index.aspx?DataSetCode=CPL
+##IMF methodology = http://www.imf.org/external/pubs/ft/weo/2017/02/weodata/weoselser.aspx?c=512%2c946%2c914%2c137%2c612%2c546%2c614%2c962%2c311%2c674%2c213%2c676%2c911%2c548%2c193%2c556%2c122%2c678%2c912%2c181%2c313%2c867%2c419%2c682%2c513%2c684%2c316%2c273%2c913%2c868%2c124%2c921%2c339%2c948%2c638%2c943%2c514%2c686%2c218%2c688%2c963%2c518%2c616%2c728%2c223%2c836%2c516%2c558%2c918%2c138%2c748%2c196%2c618%2c278%2c624%2c692%2c522%2c694%2c622%2c142%2c156%2c449%2c626%2c564%2c628%2c565%2c228%2c283%2c924%2c853%2c233%2c288%2c632%2c293%2c636%2c566%2c634%2c964%2c238%2c182%2c662%2c359%2c960%2c453%2c423%2c968%2c935%2c922%2c128%2c714%2c611%2c862%2c321%2c135%2c243%2c716%2c248%2c456%2c469%2c722%2c253%2c942%2c642%2c718%2c643%2c724%2c939%2c576%2c644%2c936%2c819%2c961%2c172%2c813%2c132%2c726%2c646%2c199%2c648%2c733%2c915%2c184%2c134%2c524%2c652%2c361%2c174%2c362%2c328%2c364%2c258%2c732%2c656%2c366%2c654%2c734%2c336%2c144%2c263%2c146%2c268%2c463%2c532%2c528%2c944%2c923%2c176%2c738%2c534%2c578%2c536%2c537%2c429%2c742%2c433%2c866%2c178%2c369%2c436%2c744%2c136%2c186%2c343%2c925%2c158%2c869%2c439%2c746%2c916%2c926%2c664%2c466%2c826%2c112%2c542%2c111%2c967%2c298%2c443%2c927%2c917%2c846%2c544%2c299%2c941%2c582%2c446%2c474%2c666%2c754%2c668%2c698%2c672&t=193
+```
+
+```{r q3}
+#3rd data set
+#Liverpool FC (EPL soccer club)
+#Data contains all match results from Sept 1893 to May 2016 by each manager.
+path3 <- "https://raw.githubusercontent.com/wheremagichappens/an.dy/master/DATA607/Project2/lfc_manager_games.csv"
+dataset3 <- read.csv(path3, header = TRUE, stringsAsFactors = FALSE)
+head(dataset3)
+tail(dataset3)
+str(dataset3)
+
+###Used ifelse. summarise, spread, filter, mutate, ggplot and etc to perform analysis.
+
+#Using ifelse rule to calculate W/L/D counts.
+dataset3$W_L_D <- ifelse(dataset3$result == "A" & dataset3$at_anf == "Away", "W", -1)
+dataset3$W_L_D <- ifelse(dataset3$result == "H" & dataset3$at_anf == "Anfield", "W", dataset3$W_L_D)
+
+dataset3$W_L_D <- ifelse(dataset3$result == "A" & dataset3$at_anf == "Anfield", "L", dataset3$W_L_D)
+dataset3$W_L_D <- ifelse(dataset3$result == "H" & dataset3$at_anf == "Away", "L", dataset3$W_L_D)
+
+dataset3$W_L_D <- ifelse(dataset3$W_L_D == -1, "D", dataset3$W_L_D)
+
+sorted3 <- summarise(group_by(dataset3, mngr, Season, W_L_D), total.count = n() )
+sorted3
+
+##There are some blanks in mngr so got rid of them. It is ok to get rid of them since those blank managers are very old ones and we won't consider them seriously.
+#Calculating number of games Won, Lost and Drew by each manager for each season.
+sorted3 <- spread(sorted3, W_L_D, total.count)
+sorted3 <- filter(sorted3, mngr != "")
+sorted3
+
+##Change N/A into 0
+sorted3$W[is.na(sorted3$W)] <- 0
+sorted3$D[is.na(sorted3$D)] <- 0
+sorted3$L[is.na(sorted3$L)] <- 0
+sorted3
+
+#ANALYSIS
+#Want to know which manager is considered as the all time best.
+sorted3 <- mutate(sorted3, sum_result = D + L + W, w_per = (W / sum_result) * 100)
+sorted3 <- summarise(group_by(sorted3, mngr), agg_sum_result = sum(sum_result), agg_sum_w = sum(W), avg_w_per = round((sum(W) / sum(sum_result) ) * 100,0) )
+sorted3 <- data.frame(sorted3)
+
+#We know that Barclay, Wil has the highest avg_w_per (Average total match Winning % for all seasons) but we cannot say he is the best coach in Liverpool.
+#His agg_sum_result (Total number of matches coached) is too low compared to Benatez, Dalglish, Paisley, Shankly and etc. 
+sorted3[order(sorted3$avg_w_per, decreasing = TRUE),]
+summary(sorted3)
+
+# I would say shankly is the best coach OVERALL since his avg_w_per (Average total match Winning % for all seasons) is 6th highest when agg_sum_w (Total number of games Won) is the highest among all.
+#Indeed, he is a balanced winner.
+sorted3[order(sorted3$agg_sum_w, decreasing = TRUE),]
+
+
+#agg_sum_w (Total number of games Won) graph
+ggplot(sorted3, aes(mngr, agg_sum_w)) + 
+  geom_bar(aes(fill = mngr), position = "dodge", stat = "identity") + 
+  geom_label(label= sorted3$agg_sum_w, nudge_x = 0.25, nudge_y = 0.25) +
+  ylab("total_Winning_cnt")   + theme(axis.title.x=element_blank(),
+                                  axis.text.x=element_blank(),
+                                  axis.ticks.x=element_blank())
+
+#avg_w_per (Average total match Winning % for all seasons) graph
+ggplot(sorted3, aes(mngr, avg_w_per)) + 
+  geom_bar(aes(fill = mngr), position = "dodge", stat = "identity") + 
+  geom_label(label= sorted3$avg_w_per, nudge_x = 0.25, nudge_y = 0.25) +
+  ylab("avg_Winning_%")   + theme(axis.title.x=element_blank(),
+                            axis.text.x=element_blank(),
+                            axis.ticks.x=element_blank())
+
+```
