@@ -58,12 +58,19 @@ str(sorted)
 sorted <- mutate(sorted, exchange_rate = sorted$NC/ sorted$'U.S. dollars' , ppp_rate = sorted$NC/sorted$PPP, price_valuation = ( (exchange_rate - ppp_rate) / exchange_rate ) * 100)
 head(sorted)
 
+#exchange_rate is calculated as GDP per capita in National Currency divided by GDP per capita in U.S. dollars.
+#PPP_rate is calculated as GDP per capita in National Currency divided by GDP per capita in PPP.
+#price_valuation is to show the difference between exchange_rate and ppp_rate with respect to exchange_rate in terms of percentage. This tells you how much each country is cheaper/more expensive than U.S.
+
+
 #NOTE
 #We do have some N/As in our data set but it is ok for our purpose. We can leave them as they are.
 
 #BACKGROUND
-#According to economists, PPP rate is a theoretical exchange rate that measures the price difference between a country and United States.
-#$1 in U.S can either purchase more/less/the same amount of goods and services in other country. (citation: http://www.oecd.org/sdd/prices-ppp/purchasingpowerparities-frequentlyaskedquestionsfaqs.htm)
+#According to economists, PPP rate is a theoretical exchange rate that measures the price difference between United States and other countries.
+#$1 in U.S can either purchase more/less/the same amount of goods and services in other country.
+########(citation: http://www.oecd.org/sdd/prices-ppp/purchasingpowerparities-frequentlyaskedquestionsfaqs.htm)
+
 ##citizens in a country where ppp_rate is higher than exchange_rate has lower purchasing power in their country than in U.S for the same $1 spent; negative price_valuation
 ##citizens in a country where ppp_rate is lower than exchange_rate has higher purchasing power in their country than in U.S for the same $1 spent; positive price_valuation
 ##Therefore, under/over-estimation of exchange rate (NC/U.S. dollars) can roughly estimate the price level difference accross the countries.
