@@ -76,8 +76,8 @@ head(sorted)
 #$1 in U.S can either purchase more/less/the same amount of goods and services in other country.
 ########(citation: http://www.oecd.org/sdd/prices-ppp/purchasingpowerparities-frequentlyaskedquestionsfaqs.htm)
 
-##citizens in a country where ppp_rate is higher than exchange_rate has lower purchasing power in their country than in U.S for the same $1 spent; negative price_valuation
-##citizens in a country where ppp_rate is lower than exchange_rate has higher purchasing power in their country than in U.S for the same $1 spent; positive price_valuation
+##citizens in a country where ppp_rate is higher than exchange_rate have lower purchasing power in their country than in U.S for the same $1 spent; negative price_valuation
+##citizens in a country where ppp_rate is lower than exchange_rate have higher purchasing power in their country than in U.S for the same $1 spent; positive price_valuation
 ##Therefore, under/over-estimation of exchange rate (NC/U.S. dollars) can roughly estimate the price level difference accross the countries.
 
 ##If price_valuation is negative (%), a country's general price level is higher (%) than United States.
