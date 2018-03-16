@@ -1,0 +1,58 @@
+---
+title: "DATA607.Assignment#7"
+author: "Sang Yoon (Andy) Hwang"
+date: "March 14, 2018"
+output: html_document
+---
+
+```{r library, include = FALSE}
+library(XML)
+library(DT)
+library(RJSONIO)
+```
+
+
+```{r q}
+##Data files can be downloaded from #https://github.com/wheremagichappens/an.dy/blob/master/DATA607/Assignment7/books.html
+#https://github.com/wheremagichappens/an.dy/blob/master/DATA607/Assignment7/books.xml
+#https://github.com/wheremagichappens/an.dy/blob/master/DATA607/Assignment7/books.json
+
+
+#HTML
+file_path <- "file:///C:/Users/ahwang/Documents/books.html"
+html <- htmlParse(file_path)
+html_table <- readHTMLTable(html, stringAsFactors = FALSE)
+html_table
+
+#Get rid of nulls in column titles
+html_table_clean <- html_table[[1]]
+html_df <- as.data.frame(html_table_clean)
+datatable(html_df)
+
+
+#XML
+file_path <- "file:///C:/Users/ahwang/Documents/books.xml"
+xml <- xmlParse(file_path)
+xml_df <- xmlToDataFrame(xml, stringsAsFactors = FALSE)
+datatable(xml_df)
+
+
+#JSON
+file_path <- "file:///C:/Users/ahwang/Documents/books.json"
+json <- fromJSON(file_path)
+json_df <- do.call(rbind, lapply(json[[1]], data.frame, stringsAsFactors = FALSE))
+datatable(json_df)
+```
+
+Check whether 3 data.frames are equal or not
+```{r equal}
+all.equal(html_df, xml_df)
+all.equal(html_df, json_df)
+all.equal(xml_df, json_df)
+
+identical(html_df, xml_df)
+identical(html_df, json_df)
+identical(xml_df, json_df)
+```
+
+They are not identical data frames.
