@@ -1,0 +1,48 @@
+---
+title: "data607.assignment9"
+author: "Sang Yoon (Andy) Hwang"
+date: "March 29, 2018"
+output: html_document
+---
+
+Set up configuration for JSON
+```{r, message=FALSE}
+#Set API key for Top Stories
+API_KEY = "?api-key=6b601306f2e34f3ab7f572ca3edf8f35"
+URL = "https://api.nytimes.com/svc/topstories/v2/home.json"
+API_URL = paste(URL,API_KEY,sep="")
+API_URL
+
+#Call necessary libraries
+library(jsonlite)
+library(stringr)
+library(knitr)
+library(tidyr)
+library(dplyr)
+```
+
+Retrieve data from API and manipulate output
+```{r}
+#Read JSON using API key
+topstories <- fromJSON(API_URL, flatten = TRUE)
+
+#Convert JSON into data.frame
+topstories <- data.frame(topstories)
+colnames(topstories)
+
+#Choose only necessary columns
+topstories_filtered <- topstories[c(6,8,10,12,15,11)]
+head(topstories_filtered)
+
+#Change the column names
+colnames(topstories_filtered)
+colnames(topstories_filtered) <- c("section", "title", "url", "item_type", "published_date", "author")
+head(topstories_filtered)
+
+#You can subset data frame by column. This time, I filtered data frame by section == "World"
+subset(topstories_filtered, section == "World")
+
+#You can also create tables for better presentation
+topstories_filtered_table <- kable(topstories_filtered)
+topstories_filtered_table
+```
