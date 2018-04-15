@@ -1,0 +1,89 @@
+---
+title: "data607.proj4"
+author: "Sang Yoon (Andy) Hwang"
+date: "April 15, 2018"
+output: html_document
+---
+
+```{r}
+library(tm)
+library(SnowballC)
+library(wordcloud)
+
+#Setting up Corpus
+spam <- Corpus(DirSource("C:/Users/ahwang/Desktop/Spamham/spam"))
+no_spam <- Corpus(DirSource("C:/Users/ahwang/Desktop/Spamham/easy_ham"))
+
+#Checking to see if Corpus works correctly
+writeLines(as.character(spam[[3]]))
+writeLines(as.character(no_spam[[3]]))
+
+
+####write a function that eliminates unnecessary characters
+cleaning <- content_transformer(function(x, pattern) {return (gsub(pattern, " ", x))})
+
+#Apply cleaning function to remove unnecessary characters
+spam <- tm_map(spam, cleaning, "-")
+spam <- tm_map(spam, cleaning, ":")
+spam <- tm_map(spam, cleaning, "'")
+spam <- tm_map(spam, cleaning, "`")
+spam <- tm_map(spam, cleaning, " -")
+
+no_spam <- tm_map(no_spam, cleaning, "-")
+no_spam <- tm_map(no_spam, cleaning, ":")
+no_spam <- tm_map(no_spam, cleaning, "'")
+no_spam <- tm_map(no_spam, cleaning, "`")
+no_spam <- tm_map(no_spam, cleaning, " -")
+
+#Remove punctuation
+spam <- tm_map(spam, removePunctuation)
+no_spam <- tm_map(no_spam, removePunctuation)
+
+#Lower text
+spam <- tm_map(spam, content_transformer(tolower))
+no_spam <- tm_map(no_spam, content_transformer(tolower))
+
+#Remove stopwords
+spam <- tm_map(spam, removeWords, stopwords("english"))
+no_spam <- tm_map(no_spam, removeWords, stopwords("english"))
+
+#Remove numbers
+spam <- tm_map(spam, removeNumbers)
+no_spam<- tm_map(no_spam, removeNumbers)
+
+##Stemming, chopping off the ends of the words to reduce counting of related words
+
+#Stem document
+spam <- tm_map(spam,stemDocument)
+no_spam <- tm_map(no_spam,stemDocument)
+
+
+#Use stripWhitespace
+spam <- tm_map(spam, stripWhitespace)
+no_spam <- tm_map(no_spam, stripWhitespace)
+
+writeLines(as.character(spam[[3]]))
+writeLines(as.character(no_spam[[3]]))
+
+##Document Term Matrix
+spam_dtm <- DocumentTermMatrix(spam)
+no_spam_dtm <- DocumentTermMatrix(no_spam)
+
+spam_dtm
+no_spam_dtm
+
+##Word frequency, analytics
+findFreqTerms(spam_dtm,lowfreq=200)
+findFreqTerms(no_spam_dtm,lowfreq=200)
+
+wordcloud(spam, min.freq=500)
+wordcloud(no_spam, min.freq=500)
+
+findAssocs(spam_dtm,"font",0.5)
+
+###For Spam, we notice words like font, size, content, width, helvetica and http. These are parts of HTML codes that change font size and color and http represents links to malicious websites.
+###For no-spam, we do not necessarily see a lot of HTML/link related keywords; in fact, you see lots of random words.
+###We know that spam emails look nicer and prettier and in fact spammers tend to use HTML codes to make mails look nicer.
+###We can predict that mails that contain many HTML font size/coloring related codes are more likely spam mails.
+###When you look at word association with font, you will see that words like style, roman, size, xml, ptfont and etc are coming together.
+```
