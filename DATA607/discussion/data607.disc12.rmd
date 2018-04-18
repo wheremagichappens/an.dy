@@ -1,0 +1,31 @@
+---
+title: "data607/discussion12: YouTube"
+author: "Sang Yoon (Andy) Hwang"
+date: "April 18, 2018"
+output: html_document
+---
+
+What are the target users?
+```{r}
+#Youtube video watchers/creators around the world.
+```
+What are their key goals?
+```{r}
+#Helping users to view preferred videos.
+```
+How can I help them accomplish their goals?
+```{r}
+#By analyzing previous histories and preferences of videos they watched and match generes and keywords associated with them.
+```
+Would the same recommender system help,say, Samsung (the advertiser)? Does that make sense? 
+```{r}
+#Not really, as they have completely different style of business. Samsung is manufacturer where as Youtube is a content provider.
+```
+Reverse Engineer
+``` {r}
+#k-mean clustring: Clustering keywords searches into different clusters. It will help users find which clusters they are in. e.g, users who typed Beetles, Rod Stewart and rock falls into British pop lover.
+```
+Specific recommendations for improvements
+``` {r}
+#We can link Youtube Account with Google Plus or other social media accounts to get more personal preference of that user when user agrees to link Youtube Login to other social media logins. This way we can get better information as to what each user truly loves.
+```
