@@ -1,0 +1,268 @@
+---
+title: 'DATA 607 Final Project: EPL 2015-2016, the biggest upset'
+author: "Sang Yoon (Andy) Hwang"
+date: '2018-05-13'
+---
+
+### Data Preparation
+
+```{r setup, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(knitr)
+library(highcharter)
+library(httr)
+library(psych)
+
+url <- "https://raw.githubusercontent.com/wheremagichappens/an.dy/master/DATA607/final-proj/E0.csv"
+epl <- read.csv(url, sep=",",  header=T)
+
+str(epl)
+head(epl)
+
+#We have to divide information into Home and Away matches for Leicester and Others (excluding Leicester) for correct comparison.
+epl_home_lei <- epl[epl$HomeTeam == "Leicester",]
+epl_away_lei <- epl[epl$AwayTeam == "Leicester",]
+
+epl_lei <- epl[epl$HomeTeam == "Leicester" | epl$AwayTeam == "Leicester",]
+epl_not_lei <- epl[epl$HomeTeam != "Leicester" & epl$AwayTeam != "Leicester",]
+
+```
+### Introduction
+
+The year 2015-2016 is particular interesting since under-dog Leicester City F.C won a title in English Primere League for the first time in their histroy. The team will be analyzed in particular detail (dividing their performances in home and away games compared to other counterparts) and will be compared to other teams to understand the particular strategies they used (e.g. did they rely more on corner kicks, triggered other teams to receive more yellow cards by playing aggressively and etc). And then, statistical analyses such as hypothesis testing, regression and etc will be used with particular variables to fully understand what helped team Leicester win matches on average.
+
+### Research question 
+
+To understand which particular variables contributed goal scoring chances for Leicester.
+
+
+
+### Cases 
+
+Each case represents a match in EPL in 2015-2016. There are 380 observations in data set.
+
+
+
+### Data collection 
+
+Data is submitted monthly. It is collected by Football-Data.
+
+
+
+### Type of study 
+
+It is an obeservational study.
+
+
+
+### Data Source 
+
+Data is collected by Football-Data and it is freely available: http://www.football-data.co.uk/italym.php.
+For this project, CSV file for 2015-2016 was downloaded and then uploaded into R.
+
+
+
+### Response 
+
+The response variable is number of full time goals in Home and Away games and they are numerical.
+
+
+
+### Explanatory 
+
+The explanatory variables are number of corners taken (home/away), fouls commited (home/away), number of yellow cards received (home/away) and shots on goal (home/away) and they are numerical.
+
+
+
+### Relevant summary statistics 
+
+```{r}
+##Comparing Leicester (Home/Away) vs other teams (Home/Away)
+
+#Leicester had higher number of corner kicks (median) than other teams when teams were playing home. For mean, they are the same.
+
+#Leicester had higher number of corner kicks (mean) than other teams when teams were playing away. For meadian, they are the same.
+
+#Leicester committed less fouls in both home and away games compared to other teams, on average, but recieved more yellow cards in away games.
+
+#Leicester had less shots on target in home games, on average and in terms of median, compared to other teams when played home. Notice the max is 9 where as it is 14 for other teams which played home showing that HST for Leicester is smaller than other teams when they played home. When Leicester played away, they had both higher mean and median AST than other teams that played away.
+
+#In summary, data shows that Leicester tended to play more aggressively than other teams in away games (higher AST, AY, AC on average) but less aggressively in home games. They took different path; usually you play lot more aggressively in home games than away games. Maybe this is the reason why they made a biggest upset?
+
+epl_lei_summary <- describe(epl_lei)
+epl_lei_summary <- data.frame(epl_lei_summary)
+epl_lei_summary[c("HC","AC", "HF", "AF", "HY", "AY", "HST", "AST"),]
+
+epl_not_lei_summary <- describe(epl_not_lei)
+epl_not_lei_summary <- data.frame(epl_not_lei_summary)
+epl_not_lei_summary[c("HC","AC", "HF", "AF", "HY", "AY", "HST", "AST"),]
+
+
+#Now, let's examine number of goals by Home Vs Away games for Leicester.
+describe(epl_lei[c("FTHG", "FTAG")])
+describe(epl_not_lei[c("FTHG", "FTAG")])
+
+#We can say that Leicester, just like we expected from above analysis, had higher FTAG on average when it comes to comparing away games. However, note that mean of FTHG is smaller for Leicester.
+
+#Let's visualize the Full time goal results
+epl_lei_goal <- gather(epl_lei, team_h_a, goals, FTHG:FTAG)
+epl_lei_goal <- epl_lei_goal[c("team_h_a","goals")]
+
+epl_lei_not_goal <- gather(epl_not_lei, team_h_a, goals, FTHG:FTAG)
+epl_lei_not_goal <- epl_lei_not_goal[c("team_h_a","goals")]
+
+table(epl_lei_goal, useNA = 'ifany')
+table(epl_lei_not_goal, useNA = 'ifany')
+
+epl_lei_goal_h <- epl_lei_goal[epl_lei_goal$team_h_a == "FTHG",]
+epl_l_h <- prop.table(table(epl_lei_goal_h$goals, useNA='ifany')) * 100
+epl_l_h <- data.frame(epl_l_h)
+colnames(epl_l_h) <- c("goals", "freq.leicester")
+epl_l_h$freq.leicester <- round(epl_l_h$freq.leicester,2)
+
+
+epl_lei_not_goal_h <- epl_lei_not_goal[epl_lei_not_goal$team_h_a == "FTHG",]
+epl_l_n_h <- prop.table(table(epl_lei_not_goal_h$goals, useNA='ifany')) * 100
+epl_l_n_h <- data.frame(epl_l_n_h)
+colnames(epl_l_n_h) <- c("goals", "freq.others")
+epl_l_n_h$freq.others <- round(epl_l_n_h$freq.others,2)
+
+a <- merge(epl_l_h, epl_l_n_h, all = TRUE)
+a <- data.frame(a)
+a
+
+epl_lei_goal_a <- epl_lei_goal[epl_lei_goal$team_h_a == "FTAG",]
+epl_l_a <- prop.table(table(epl_lei_goal_a$goals, useNA='ifany')) * 100
+epl_l_a <- data.frame(epl_l_a)
+colnames(epl_l_a) <- c("goals", "freq.leicester")
+epl_l_a$freq.leicester <- round(epl_l_a$freq.leicester,2)
+
+epl_lei_not_goal_a <- epl_lei_not_goal[epl_lei_not_goal$team_h_a == "FTAG",]
+epl_l_n_a <- prop.table(table(epl_lei_not_goal_a$goals, useNA='ifany')) * 100
+epl_l_n_a <- data.frame(epl_l_n_a)
+colnames(epl_l_n_a) <- c("goals", "freq.others")
+epl_l_n_a$freq.others <- round(epl_l_n_a$freq.others,2)
+
+b <- merge(epl_l_a, epl_l_n_a, all = TRUE)
+b <- data.frame(b)
+b
+
+##Lei vs Others, home FTHG
+aa <- highchart() %>% 
+  hc_yAxis_multiples(
+    list(lineWidth = 3),
+    list(lineWidth = 3)
+  ) %>% 
+  hc_add_series(name = "Leicester", data = a$freq.leicester, color='blue', type = "column") %>% 
+  hc_add_series(name = "Others", data = a$freq.others, color='green', type = "column") %>%
+  hc_xAxis(categories = a$goals, title = list(text = c("goals")))
+
+aa
+
+sort(b$goals, decreasing = FALSE)
+##Lei vs Others, Away FTHG
+bb <- highchart() %>% 
+  hc_yAxis_multiples(
+    list(lineWidth = 3),
+    list(lineWidth = 3)
+  ) %>% 
+  hc_add_series(name = "Leicester", data = b$freq.leicester, color='blue', type = "column") %>% 
+  hc_add_series(name = "Others", data = b$freq.others, color='green', type = "column") %>%
+  hc_xAxis(categories = b$goals, title = list(text = c("goals")))
+
+bb
+
+#We can see that Leicester tend to score more when you compare teams in Away. Indeed, they are doing better than others in Away vs Away comparison.
+
+```
+#Getting extra data from API
+
+```{r}
+#check if number of matches are indeed 380 from other data source
+
+url = 'api.football-data.org/'
+request = 'v1/competitions/?season=2015'
+headers = c('X-Auth-Token', '6c904354c704496bae14af32ceeff5a8')
+a = GET(paste(url,request,sep=""),
+add_headers(headers),
+add_headers('X-Response-Control','minified'))
+repo <- content(a)
+
+this.content.df <- do.call(what = "rbind",
+                           args = lapply(repo[5], as.data.frame))
+
+this.content.df
+
+#The data from this API is pretty much very similar to football-data.org. Either use this or from football-data directly.
+```
+## Statistical Inference
+
+```{r}
+#From the analysis above, we know that Leicester tend to attack aggresively Away vs Away. We want to know if they were attacking efficiently in away games. We know that FTHG is rather smaller for Leicester but that does not mean they were doing worse than Others. In fact, we will have to figure out how "effective" they were attacking compared to others; hence, we will have to examine the AST(HST)/FTAG(FTHG) ratio. If ratio is generally lower for Leicester, we can say that they were doing better than Others when it comes to converting shots into actual goals. To figure out this, we will have to run multiple regressions.
+
+
+###Away vs Away
+reg_l_a <- lm(FTAG ~ AC + AF + AY + AST, data = epl_away_lei)
+summary(reg_l_a)
+#P-value for AST is less than 0.05, statistically significant. Coefficient is 0.336. Surprisingly, other variables are not statistically significant for FTAG (Leicester).
+
+reg_o_a <- lm(FTAG ~ AC + AF + AY + AST, data = epl_not_lei)
+summary(reg_o_a)
+#P-Value for AST and AC are less than 0.05, statistically significant. Coefficient for AC is -0.064 where as for AST, it is 0.314. Quite surprising that AC has negative relationship with FTAG (Others).
+
+
+###Home vs Home
+reg_l_h <- lm(FTHG ~ HC + HF + HY + HST, data = epl_home_lei)
+summary(reg_l_h)
+#P-value for HST is less than 0.05, statistically significant. Coefficient is 0.336. Surprisingly, other variables are not statistically significant for FTAG (Leicester).
+
+reg_o_h <- lm(FTHG ~ HC + HF + HY + HST, data = epl_not_lei)
+summary(reg_o_h)
+#P-value for HST and HC are less than 0.05, statistically significant. Coefficient for HC is -0.1295 where as for HST, it is 0.304. Quite surprising that HC has negative relationship with FTHG (Others).
+
+##shots on goals: Leceister vs Others, on average.
+
+##Home vs Home
+describe(epl_home_lei$HST)
+describe(epl_home_lei$FTHG)
+shot_goal_ratio1 <- 4.68/1.84
+
+describe(epl_not_lei$HST)
+describe(epl_not_lei$FTHG)
+shot_goal_ratio2 <- 4.67/1.5
+
+##Away vs Away
+describe(epl_away_lei$AST)
+describe(epl_away_lei$FTAG)
+shot_goal_ratio3 <- 4.84/1.74
+
+describe(epl_not_lei$AST)
+describe(epl_not_lei$FTAG)
+shot_goal_ratio4 <- 3.84/1.19
+
+
+##Visualizing shots/goal
+home_ratio <- rbind(shot_goal_ratio1,shot_goal_ratio2)
+away_ratio <- rbind(shot_goal_ratio3,shot_goal_ratio4)
+
+cc <- cbind(home_ratio,away_ratio)
+cc <- data.frame(cc)
+colnames(cc) <- c("home", "away")
+rownames(cc) <- c("Leicester", "Others")
+cc <- round(cc,2)
+
+ccc <- highchart() %>% 
+  hc_yAxis_multiples(
+    list(lineWidth = 3),
+    list(lineWidth = 3)
+  ) %>% 
+  hc_add_series(name = "home", data = cc$home, color='blue', type = "column") %>% 
+  hc_add_series(name = "away", data = cc$away, color='green', type = "column") %>%
+  hc_xAxis(categories = rownames(cc), title = list(text = c("shots/goal")))
+
+ccc
+
+##In conclusion, we know that for both Home and Away, Leicester had higher coefficient for HST and AST for FTAG and FTAG which indicate that Leicester's shot on target led to goals more often than Others. Indeed, Leicester were very clinical and efficient teams. Surprisingly, both HC and AC were not useful when it comes to goal socring for Leicester. In fact, we know that Leicester had higher AC, on average, for Away vs Away comparison, but this did not necessarily lead into goal scoring at all as P-value was larger than 0.05. Indeed, Leicester could score more goals and win matches by simply being more clinical and efficient in terms of shot on goal per full time goal ratio.
+```
