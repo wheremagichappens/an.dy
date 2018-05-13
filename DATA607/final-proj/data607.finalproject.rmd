@@ -47,7 +47,7 @@ Each case represents a match in EPL in 2015-2016. There are 380 observations in 
 
 ### Data collection 
 
-Data is submitted monthly. It is collected by Football-Data.
+Data is submitted monthly. It is collected by Football-Data and API.
 
 
 
@@ -60,7 +60,7 @@ It is an obeservational study.
 ### Data Source 
 
 Data is collected by Football-Data and it is freely available: http://www.football-data.co.uk/italym.php.
-For this project, CSV file for 2015-2016 was downloaded and then uploaded into R.
+For this project, CSV file for 2015-2016 was downloaded and then uploaded into R. Second data source is from https://www.football-data.org. It provides API for major European matches between 2015 and 2016 and similar information as the above.
 
 
 
