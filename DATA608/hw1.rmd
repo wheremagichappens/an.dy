@@ -1,0 +1,263 @@
+---
+title: "R Notebook"
+author: "Sang Yoon (Andy) Hwang"
+date: 2019-02-06
+output:
+  html_document: default
+  html_notebook: default
+---
+
+**Principles of Data Visualization and Introduction to ggplot2**
+
+I have provided you with data about the 5,000 fastest growing companies in the US, as compiled by Inc. magazine. lets read this in:
+
+```{r}
+
+library(sqldf)
+library(ggplot2)
+library(outliers)
+
+inc <- read.csv("https://raw.githubusercontent.com/charleyferrari/CUNY_DATA_608/master/module1/Data/inc5000_data.csv", header= TRUE)
+
+```
+
+And lets preview this data:
+
+```{r}
+
+head(inc)
+
+```
+```{r}
+
+summary(inc)
+
+```
+
+Think a bit on what these summaries mean. Use the space below to add some more relevant non-visual exploratory information you think helps you understand this data:
+
+Let's find some outliers (notably Growth, employees and Revenue; maximum values are way too high) in our data. 
+Not only that, let's see data types for each column and remove scientific notations in summary.
+
+```{r}
+
+# Insert your code here, create more chunks as necessary
+
+#Outliers
+max_growth <- subset(inc, Growth_Rate == max(inc['Growth_Rate']))
+max_growth
+
+max_rev <- subset(inc, Revenue == max(inc['Revenue']))
+max_rev
+
+max_employee <- subset(inc, inc['Employees'] == 66803)
+max_employee
+
+#Let's see how data looks like without outliers.
+inc_no_outlier <- subset(inc, !(Rank %in% c(max_growth['Rank'], max_rev['Rank'], max_employee['Rank'])) )
+summary(inc_no_outlier)
+#Well, it seems like data is still heavily right-skewed as Employees, Revenue and Growth rate have much higher Mean than Median even after removing outliers.
+
+#Data types for each column
+str(inc)
+
+# Using scipen=999 to disable scientific notations in Revenue.
+options(scipen=999)
+summary(inc)
+```
+
+## Question 1
+
+Create a graph that shows the distribution of companies in the dataset by State (ie how many are in each state). There are a lot of States, so consider which axis you should use. This visualization is ultimately going to be consumed on a 'portrait' oriented screen (ie taller than wide), which should further guide your layout choices.
+
+```{r, warning=FALSE, fig1, fig.height = 10, fig.width=10}
+
+# Answer Question 1 here
+
+# I am using sqldf to group by State and count number of companies
+query<-sqldf("select 
+          State, count(distinct Name) as cnt_comp
+          from inc 
+          group by State")
+
+# Using ggplot to graph
+ggplot(query, aes(x=reorder(State, cnt_comp), y=cnt_comp)) +
+ geom_bar(stat="identity", fill="green") +
+ geom_text(aes(label=cnt_comp)) +
+ ylab("# of companies") +
+ xlab("State") +
+ coord_flip() +
+ ggtitle("Number of Companies by State") +
+ theme_bw() 
+
+```
+
+## Quesiton 2
+
+Lets dig in on the state with the 3rd most companies in the data set. Imagine you work for the state and are interested in how many people are employed by companies in different industries. Create a plot that shows the average and/or median employment by industry for companies in this state (only use cases with full data, use R's `complete.cases()` function.) In addition to this, your graph should show how variable the ranges are, and you should deal with outliers.
+
+```{r, warning=FALSE, fig2, fig.height = 10, fig.width=10}
+
+# Answer Question 2 here
+
+#Filter out N/As in full data
+full <- inc[complete.cases(inc),]
+
+#Using filtered full, choose 3rd most state
+third <- subset(full, State == 'NY')
+
+#The summary looks good, no N/As
+summary(third)
+
+
+# I am using sqldf to group by industry to get mean employment in NY
+query<-sqldf("select 
+          Industry, avg(Employees) as avg_emp
+          from third 
+          group by Industry")
+
+# Using ggplot to graph
+ggplot(query, aes(x=reorder(Industry, avg_emp), y=round(avg_emp,0))) +
+ geom_bar(stat="identity", fill="skyblue") +
+ geom_text(aes(label=round(avg_emp,0))) +
+ ylab("Mean Number Of Employees") +
+ xlab("Industry") +
+ ggtitle("Mean Number of Employees by Industry in New York") +
+ coord_flip() +
+ theme_bw() 
+
+#There are outliers in Employees variables by Industry. We will get rid of these and re-graph our result.
+ggplot(third, aes(x=reorder(Industry,Employees) , y=Employees)) +
+  geom_boxplot() +
+  ggtitle("Box-Plot by Industry and number of Employees") +
+  coord_flip()
+
+#outlierKD function will automatically detect outliers and replace dataset (third) with dataset without outliers
+outlierKD <- function(dt, var) {
+     var_name <- eval(substitute(var),eval(dt))
+     na1 <- sum(is.na(var_name))
+     m1 <- mean(var_name, na.rm = T)
+     par(mfrow=c(2, 2), oma=c(0,0,3,0))
+     boxplot(var_name, main="With outliers")
+     hist(var_name, main="With outliers", xlab=NA, ylab=NA)
+     outlier <- boxplot.stats(var_name)$out
+     mo <- mean(outlier)
+     var_name <- ifelse(var_name %in% outlier, NA, var_name)
+     boxplot(var_name, main="Without outliers")
+     hist(var_name, main="Without outliers", xlab=NA, ylab=NA)
+     title("Outlier Check", outer=TRUE)
+     na2 <- sum(is.na(var_name))
+     cat("Outliers identified:", na2 - na1, "n")
+     cat("Propotion (%) of outliers:", round((na2 - na1) / sum(!is.na(var_name))*100, 1), "n")
+     cat("Mean of the outliers:", round(mo, 2), "n")
+     m2 <- mean(var_name, na.rm = T)
+     cat("Mean without removing outliers:", round(m1, 2), "n")
+     cat("Mean if we remove outliers:", round(m2, 2), "n")
+     dt[as.character(substitute(var))] <- invisible(var_name)
+     assign(as.character(as.list(match.call())$dt), dt, envir = .GlobalEnv)
+     cat("Outliers successfully removed", "n")
+     return(invisible(dt))
+}
+
+#Using loop, remove outliers in Employees by each industry
+industries <- unique(third$Industry)
+third_wo <-NULL
+
+for (i in industries){
+  d2 <- subset(third, Industry == i)
+  outlierKD(d2, Employees)
+  third_wo <- rbind(d2, third_wo)
+}
+
+# Now, dataset (third) is free of outliers but notice there are NAs because these NAs were outliers before
+summary(third)
+summary(third_wo)
+
+# We want to filter out N/As in third without outliers once more
+third_wo <- third_wo[complete.cases(third_wo),]
+
+#Let's see how box-plot now looks like with new dataset. Pretty neat
+ggplot(third_wo, aes(x=reorder(Industry,Employees) , y=Employees)) +
+  geom_boxplot() +
+  ggtitle("Box-Plot by Industry and Number of Employees") +
+  coord_flip()
+
+
+
+# I am re-using sqldf to group by industry to get mean employment in NY (without outliers)
+query<-sqldf("select 
+          Industry, avg(Employees) as avg_emp
+          from third_wo 
+          group by Industry")
+
+# Using ggplot to re-graph (without outliers)
+ggplot(query, aes(x=reorder(Industry, avg_emp), y=round(avg_emp,0))) +
+ geom_bar(stat="identity", fill="skyblue") +
+ geom_text(aes(label=round(avg_emp,0))) +
+ ylab("Mean Number Of Employees") +
+ xlab("Industry") +
+ ggtitle("Mean Number of Employees by Industry in New York") +
+ coord_flip() +
+ theme_bw() 
+
+# Use query again
+query <- sqldf("select 
+          Industry, avg(Employees) as avg_emp
+          from third 
+          group by Industry")
+ 
+# We can also remove outliers in mean level
+outlier_avg <- outlier(query$avg_emp)
+
+# remove a row with outlier
+query <- subset(query, avg_emp != outlier_avg)
+
+# Graph again
+ggplot(query, aes(x=reorder(Industry, avg_emp), y=round(avg_emp,0))) +
+ geom_bar(stat="identity", fill="skyblue") +
+ geom_text(aes(label=round(avg_emp,0))) +
+ ylab("Mean Number Of Employees") +
+ xlab("Industry") +
+ ggtitle("Mean Number of Employees by Industry in New York") +
+ coord_flip() +
+ theme_bw() 
+
+
+```
+
+## Question 3
+
+Now imagine you work for an investor and want to see which industries generate the most revenue per employee. Create a chart that makes this information clear. Once again, the distribution per industry should be shown.
+
+```{r, warning=FALSE, fig3, fig.height = 10, fig.width=10}
+# Answer Question 3 here
+
+# Use query again
+query<-sqldf(
+          "SELECT a.Industry, (tot_rev / emp_cnt) as rev_emp
+          FROM
+          (select 
+          Industry, SUM(Revenue) as tot_rev, SUM(Employees) as emp_cnt
+          from full 
+          group by Industry) as a"
+)
+
+#Set K = 4 for K-mean clustering: Very high, high, medium, low by Revenue Per Employee
+cl=(kmeans(query$rev_emp,4))
+
+#set cluster as a factor and add it to our dataset
+query$cluster=factor(cl$cluster)
+centers=as.data.frame(cl$centers)
+
+#Plot cluster points
+ggplot(query, aes(x=reorder(Industry, rev_emp), y=round(rev_emp,2), color=cluster)) +
+ geom_point() + 
+ geom_text(aes(label=round(rev_emp/1000,2)), hjust=1, size=4) +
+ ylab("Revenue Per Employee (1000's)") +
+ xlab("Industry") +
+ ggtitle("K-Mean Clustering : Revenue Per Employee") +
+ coord_flip() +
+ theme_bw() +
+ scale_y_continuous(labels = function(x){paste0(x/1000, 'K')})
+
+```
