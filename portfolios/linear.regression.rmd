@@ -1,0 +1,624 @@
+---
+title: 'Homework #1: Predicting Major League Baseball Wins'
+subtitle: 'CUNY SPS DATA 621 Spring 2019'
+author: 
+  - "Group # 4"
+date: "February 27, 2019"
+output: 
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 2
+---
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# Load libraries ----
+library(dplyr)          # Data manipulation
+library(tidyr)          # Data transformation
+library(purrr)          # 
+library(e1071)          # Misc stats functions
+library(pander)         # Pandoc tables
+library(ggplot2)        # visualization
+library(scales)         # Vis scale functions
+library(ggcorrplot)     # Vis corr matrix
+library(mice)           # MICE imputation
+library(MASS)           # Support functions
+library(car)            # Applied regression functions
+library(purrr)          # function programming tools
+library(ggfortify)      # Vis for model results
+library(ModelMetrics)   # model metrics calculations
+library(leaps)          # Stepwise selection
+library(caret)          # Classification and regression training
+```
+```{r dataImport, include=FALSE, cache=TRUE}
+# Import data ----
+# data directory
+dataDir <- '/home/analysis/Documents/CUNY SPS/DATA621_SP19/Week03/'
+
+# training data
+dfTrain <- read.csv(file.path(dataDir, 'moneyball-training-data.csv'))
+
+# evaluation data
+dfEval <- read.csv(file.path(dataDir, 'moneyball-evaluation-data.csv'))
+
+# Verify import from data dictionary and case listing
+# str(dfTrain)
+# str(dfEval)
+
+# Simplify column names by removing redunant TEAM_
+colnames(dfTrain) <- gsub('^TEAM_', '', colnames(dfTrain))
+colnames(dfEval) <- gsub('^TEAM_', '', colnames(dfEval))
+
+# check for data dictionary file
+evlDD <- !any(grepl('DATA621HW1D.csv', list.files(dataDir)))
+```
+```{r extractDD, include=FALSE, eval=evlDD}
+# extract data dictionary table from homework assignment PDF
+library(tabulizer)
+
+# extract tables from PDF
+pdfTbls <- extract_tables(file.path(dataDir, 'DATA 621-HW#1.pdf'))
+
+# pull data dictionary out and store in data frame
+dfDataDict <- as.data.frame(pdfTbls[[1]], stringsAsFactors = FALSE)
+
+# move row 1 into column names
+colnames(dfDataDict) <- tolower(gsub('\\r', ' ', dfDataDict[1, ]))
+
+# remove row 1
+dfDataDict <- dfDataDict[-1, ]
+
+# change variable names
+dfDataDict$`variable name` <- gsub('TEAM_', '', dfDataDict$`variable name`)
+
+# write data frame to csv
+write.csv(dfDataDict, file.path(dataDir, 'DATA621HW1D.csv')
+          , row.names = FALSE)
+
+# clean global environment
+rm(pdfTbls, dfDataDict)
+```
+
+# Objective
+
+The the goal of this report is to develop a model which can accurately predict the number of wins of of a Major League Baseball (MLB) team based on historical performance.
+
+# Data exploration
+
+## Data dictionary
+
+The table below table below describes the variables in the dataset.
+
+```{r tblDD, results='asis'}
+# import CSV of data mape
+dfDMap <- read.csv(file.path(dataDir, 'DATA621HW1D.csv'))
+
+# replace . in column names w/ space
+colnames(dfDMap) <- gsub('\\.', ' ',  colnames(dfDMap))
+  
+# print PDF as markdown table
+dfDMap %>% pandoc.table()
+```
+
+## Summary statistics
+
+The training data set contains `r nrow(dfTrain)` observations and `r ncol(dfTrain)` variables including the response variable, `TARGET_WINS`.  Of these columns `r ifelse(sum(apply(dfTrain, 2, is.numeric)) == ncol(dfTrain), 'all', sum(apply(dfTrain, 2, is.numeric)))` are numeric `r ifelse(sum(apply(dfTrain, 2, is.factor)) > 0, paste0(' and ', sum(apply(dfTrain, 2, is.factor)), ' are categorical'), '')`.  
+
+```{r summaryCalc, warning=FALSE}
+# Create a table summarizing the training data
+# create lists of desired summary stats for calculation
+statFuns <- 
+  funs(missing = sum(is.na(.))
+       , min = min(., na.rm = TRUE)
+       , Q1 = quantile(., .25, na.rm = TRUE)
+       , mean = mean(., na.rm = TRUE)
+       , median = median(., na.rm = TRUE)
+       , Q3 = quantile(., .75, na.rm = TRUE)
+       , max = max(., na.rm = TRUE)
+       , sd = sd(., na.rm = TRUE)
+       , mad = mad(., na.rm = TRUE)
+       , skewness = skewness(., na.rm = TRUE)
+       , kurtosis = kurtosis(., na.rm = TRUE)
+  )
+
+# Create data frame of basic summary stats
+dfSumTrain <- 
+  dfTrain %>% 
+  # union(dfEval %>% mutate(TARGET_WINS = as.numeric(NA))) %>% 
+  dplyr::select(-INDEX) %>% 
+  summarise_all(statFuns) %>% 
+  gather() %>% 
+  separate(key, c('metric', 'stat'), sep = '(_)(?!.*_)') %>% 
+  spread(stat, value) %>% 
+  dplyr::select(metric, names(statFuns))
+```
+
+In the following tables the summary statistics for all of the variables in the dataset.  They have been broken up into two tables for ease of reading.  While some aspects of the distribution of the variables are easier seen in visualization.  Two notable statistics are that `PITCHING_SO` has a strongly positive skew which may need to be addressed before developing a model; other predictors show skew and kurtosis, but to a lesser degree.  Also, `BATTING_HBP` has a considerable amount of missing data.
+
+\newpage
+
+```{r summaryTable, results='asis'}
+# print summary stats as two tables for easier reading
+
+# stats for table 1
+vTbl1Stats <- c('metric', 'min', 'Q1', 'mean', 'median', 'Q3', 'max')
+
+pandoc.table(dfSumTrain[, vTbl1Stats], missing = '-')
+
+pandoc.table(dfSumTrain[
+  , c('metric', setdiff(colnames(dfSumTrain), vTbl1Stats))], missing = '-')
+
+# clean global environment
+rm(vTbl1Stats)
+```
+
+## Visualizations
+
+### Missing data
+
+As mentioned in review of the summary statistics `BATTING_HBP` has approximately `r sprintf("%.0f%%", 100*round(dfSumTrain$missing[dfSumTrain$metric == 'BATTING_HBP'] / nrow(dfTrain),2))` of the data missing and `BASERUN_CS` has roughly `r sprintf("%.0f%%", 100*round(dfSumTrain$missing[dfSumTrain$metric == 'BASERUN_CS'] / nrow(dfTrain),2))`.  It is not immediately apparent whether these missing values are not applicable or actually missing. If it is the latter the proportion of missing data for these two variables is too large to reasonably consider addressing through substitution or imputation.
+
+```{r plotMissing, fig.align='center', warning=FALSE, fig.height=4, fig.width=8}
+# create bar plot of percent of missing data, add counts as text labels
+dfSumTrain %>% 
+  group_by(metric) %>% 
+  mutate(miss_perc = missing / !!nrow(dfTrain)) %>% 
+  dplyr::select(metric,missing, miss_perc) %>% 
+  ggplot(data = ., aes(x = reorder(metric, -miss_perc) , y = miss_perc)) + 
+  geom_bar(stat = 'identity') +
+  coord_flip() + 
+  geom_text(aes(label = missing), hjust = -0.1, size = 3) + 
+  labs(x = NULL, y = NULL, Title = '% Missing') + 
+  theme(legend.position = 'none') + 
+  scale_y_continuous(labels = scales::percent)
+```
+
+### Univariate distributions
+
+The plot below of a density plot overlayed on a histogram for all variables shows that more variables than those identified using the skewness statistics appear to have a skewed distribution.  Some like `BASERUN_SB` may benefit from transformation, however other such as `BATTING_2B` may not require transformation as the base size of the data is sufficient to allow for some deviation from a normal distribution.<!--   Another consideration is that `BATTING_HR`, `BATTING_SO`, and `PITCHING_HR` appear to be multimodal. -->
+
+```{r facetDensity, fig.align='center', warning=FALSE, fig.height=6, fig.width=8}
+# plot of density (histogram and density plot) for all variables
+dfTrain %>% 
+  # union(dfEval %>% mutate(TARGET_WINS = as.numeric(NA))) %>%
+  dplyr::select(-INDEX) %>% 
+  gather() %>% 
+  group_by(key) %>% 
+  ggplot(data = ., aes(value)) + 
+  geom_histogram(bins = 30, aes(y = ..density..)) +
+  geom_density(alpha = 0.3, color = NA, fill = 'lightgreen') + 
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::percent) +
+  facet_wrap(~key, scales = 'free') + 
+  labs(x = NULL, y = NULL) + 
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+The histogram and density show that some of the predictors have long tails indicative of outliers.  The plot below shows a boxplot and violin plot for each variable.  Many of the variables appear to have outliers with predictors like `FIELDING_E` and  `PITCHING_H` appear to have the most potential outliers.  How these outliers will be handled will be dependent on a mix of reference data and statistical techniques.
+
+```{r facetBox, fig.align='center', warning=FALSE, fig.height=12, fig.width=8}
+# boxplot with violin plot overlaid for all variables
+dfTrain %>% 
+  # union(dfEval %>% mutate(TARGET_WINS = as.numeric(NA))) %>%
+  dplyr::select(-INDEX) %>% 
+  gather() %>% 
+  group_by(key) %>% 
+  ggplot(data = ., aes(x = '', y = value)) + 
+  geom_boxplot() + 
+  geom_violin(alpha = 0.3, color = NA, fill = 'lightgreen') + 
+  labs(x = NULL, y = NULL) + 
+  theme(axis.ticks.y=element_blank()) + 
+  facet_wrap(~key, scales = 'free', ncol = 2) + 
+  coord_flip()
+```
+
+### Bivariate relationships
+
+The plot below shows scatter plots of all the response variable against each predictor in the data overlayed with a regression line to help visualize the relationship.  Since the univariate summary statistics and visualizations showed that nor all predictors are reasonably normal in their distribution caution needs to be employed when making any inferences.  Comparing the apparent relationships to the theoretical impact in the data dictionary shows that in the untransformed data most of theoretical assumptions align with the observations in the data; `PITCH_HR` is a notable exception which may suggest relationships among the predictors.
+
+```{r facetScatter, fig.align='center', warning=FALSE, fig.height=6, fig.width=8}
+# scatterplot of TARGET_WINS against all predictors with GAM smoothing
+dfTrain %>% 
+  dplyr::select(-INDEX) %>% 
+  gather(key, value, -TARGET_WINS) %>% 
+  group_by(key) %>% 
+  ggplot(data = ., aes(x = value, y = TARGET_WINS)) + 
+  geom_point() + 
+  geom_smooth(method = 'gam') + 
+  facet_wrap(~key, scales = 'free') + 
+  labs(x = NULL) + 
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+#### Correlation matrix
+
+The scatterplot matrix below shows the relationships, Pearson Correlation Coefficient, between all variables in the data.  The first column which represents the relationships between the response variable and each predictor further supports the observations made from the scatterplots.  The matrix also shows that there are relationships between the some of the predictors as well.  The strongest correlation is between `PITCHING_HR` and `BATTING_HR` which makes sense a pitcher would need to allow a homerun for a batter to hit a homerun.
+
+```{r corrPlot, fig.align='center', warning=FALSE, fig.height=6, fig.width=8}
+# Calculate pairwise pearson correlation and display as upper matrix plot
+dfTrain %>% 
+  # union(dfEval %>% mutate(TARGET_WINS = as.numeric(NA))) %>%
+  dplyr::select(-INDEX) %>% 
+  cor(method = 'pearson', use = 'pairwise.complete.obs') %>% 
+  ggcorrplot(corr = ., method = 'square', type = 'upper'
+             , lab = TRUE, lab_size = 3, lab_col = 'grey20')
+```
+
+# Data preparation
+
+Before modeling can be done, the issues identified during the data exploration namely creating predictors for information not explicitly presented in the data, non-normal distributions and missing data need to be addressed.  
+
+## Variable creation
+
+One predictor which was not explicitly described with he current predictors were single base hits by batters.  This has been computed by calculating the difference in `BATTING_H` each of the sum of each of the base hits and stored as `BATTING_1B`.
+
+```{r calcBATTING_1B}
+# Store training data in new data set for variable manipulation
+dfMDL <- dfTrain
+
+# calculate 1B hits
+dfMDL$BATTING_1B <- 
+  dfMDL$BATTING_H - 
+  rowSums(dfMDL[, paste0('BATTING_', c('2B', '3B', 'HR'))])
+```
+
+## Variable removal
+
+For missing data, `BATTER_HBP` there is too much data missing to reasonably attempt substitution or other imputation techniques and will be dropped.  The other predictors with missing data have enough data that imputation is possible.
+
+The two predictors `BATTING_HR` and `PITCHING_HR` have a near perfect Pearson correlation coefficient.  Given this strong relationship including both in a model would not improve prediction and one can be dropped -- `PITCHING_HR` has been dropped.
+
+```{r dropHBP}
+# Dropping BATTER_HBP from modeling data=
+dfMDL <- 
+  dfTrain %>% 
+  dplyr::select(-BATTING_HBP, -PITCHING_HR)
+```
+
+<!-- Non-normal distributed data.  For most of the predictors a log transformation or Box-Cox transformation will likely be sufficient to produce a more normal distribution, however for `BATTING_SO` which appears to be multimodal clusting will be employed to split this predictor such that both distributions can be evaluated.    -->
+<!-- https://stackoverflow.com/questions/20387802/splitting-a-bimodal-distribution -->
+
+## Imputation
+
+Of the three predictors remaining with missing values two of them have a relatively small portion of the observations missing.  For these two single imputation substituting the median for the missing values would be sufficient. However `FIELDING_DP` has enough missing observations that single imputation would likely be detrimental to the explanatory capability of the predictor that another technique should be employed.  After reviewing a few methods of multiple imputation Multiple Imputation Chained Equations (MICE) was selected for its strength in handling imputation for observations with more than one predictor missing.
+
+```{r miceImpute}
+# set seed for split to allow for reproducibility
+set.seed(20190227L)
+
+# use mice w/ default settings to impute missing data
+miceImput <- mice(dfMDL, printFlag = FALSE)
+
+# review mice results
+# densityplot(miceImput)
+# stripplot(miceImput, pch = 20, cex = 1.2)
+
+# add imputed data to original data set
+dfMDLImpute <- complete(miceImput)
+```
+
+## Transformations
+
+The data contains enough observations that some deviation from normal distributions are acceptable.  However for the predictors which are strongly skewed such as `FIELDING_E` a box-cox transformation has been applied.
+
+```{r transformnonnormal, warning=FALSE}
+# apply box-cox power transformations to heavily skewed variables
+# TODO revise to use either lapply & function or purrr map commands
+BXLambda <- 
+  c( FIELDING_E = as.numeric(powerTransform(dfMDLImpute$FIELDING_E)$lambda)
+    , PITCHING_H = as.numeric(powerTransform(dfMDLImpute$PITCHING_H)$lambda)
+    , PITCHING_SO = 
+      as.numeric(powerTransform(dfMDLImpute$PITCHING_SO + 1)$lambda)
+    , PITCHING_BB = 
+      as.numeric(powerTransform(dfMDLImpute$PITCHING_BB + 1)$lambda))
+
+dfMDLImpute$FIELDING_E_BC <- 
+  dfMDLImpute$FIELDING_E^BXLambda['FIELDING_E']
+
+dfMDLImpute$PITCHING_H_BC <- 
+  dfMDLImpute$PITCHING_H^BXLambda['PITCHING_H']
+
+# pitching SO and BB have zero value adding 1 to allow box-cox transform
+dfMDLImpute$PITCHING_SO_BC <- 
+  (dfMDLImpute$PITCHING_SO)^BXLambda['PITCHING_SO']
+
+dfMDLImpute$PITCHING_BB_BC <- 
+  dfMDLImpute$PITCHING_BB^BXLambda['PITCHING_BB']
+
+# plot histogram to show impact of box-cox
+dfMDLImpute %>% 
+  dplyr::select(matches('PITCHING_(H|BB|SO)|FIELDING_E')) %>% 
+  gather() %>% 
+  ggplot(data = ., aes(value)) + 
+  geom_histogram(bins = 30) + 
+  facet_wrap(~key, ncol = 2, scales = 'free')
+```
+
+## Outliers
+
+Determining whether data is an outlier can be quite nuanced.  Beside purely statistical approaches decision about outliers can depend on knowledge of the data both in how it was collected or knowledge about the specific subject matter. Typically a combination of both approaches would be employed, however given limited knowledge of baseball, known rules changes which would impact comparison of statistics, and a limited time frame to gain practical familiarity only purely statistical approaches have been employed.
+
+### Statistical approach
+
+The season and team statistics provided in the data have been scaled to reflect the current number of games and team in a season, however it is not clear whether or not any adjustments have been made for rule changes which could potentially impact results.  Since this is unknown outliers will be determined using the Median Absolute Deviation (MAD);  as a metric of central tendency, median is less effected by extreme values than mean.  Anything that exceeds three MAD of the median will be considered an outlier and dropped. 
+
+```{r}
+# create function to evaluate whether a value is an outlier
+madOutlier <- function(x, cutoff = 3){
+  madrange <- mad(x)*c(-1,1)*cutoff
+  lower <- x < median(x) + madrange[1]
+  upper <- x > median(x) + madrange[2]
+  return(lower | upper)
+}
+
+# store outliers in a dataframe
+dfOutlier <- as.data.frame(apply(dfMDLImpute, 2, madOutlier))
+
+# retain INDEX of outliers to remove
+outlierIndex <- 
+  dfMDLImpute$INDEX[
+    apply(
+      dfOutlier
+      [ , setdiff(colnames(dfOutlier)
+                  ,c('INDEX', names(BXLambda)))], 1, any)]
+
+# potential outliers?
+# length(outlierIndex)
+```
+
+
+<!-- https://www.sciencedirect.com/science/article/pii/S0022103113000668 -->
+<!-- http://eurekastatistics.com/using-the-median-absolute-deviation-to-find-outliers/ -->
+
+# Build models
+
+For purposes of model development and evaluation the training data is split 70/30 with 70% of the data being used for model development, and 30% being used to evaluate the model.
+
+```{r mdlSplut}
+# set seed for split to allow for reproducibility
+set.seed(20190227L)
+
+# use 70% of the data for model development
+dfMDLTrain <- 
+dfMDLImpute %>% 
+  sample_frac(size = 0.7)
+
+# retain remainder of data for evaluating model accuracy
+dfMDLEval <- 
+  dfMDLImpute %>% 
+  anti_join(dfMDLTrain, by = 'INDEX')
+```
+
+## Model 1: imputation only
+
+This model serves as a baseline for evaluating the benefits of variable transformation and outlier removal on prediction accuracy.  Not all predictors were statistically significant so a stepwise regression tuning by the Akike Information Criterion (AIC) was employed for predictor selection.  The adjusted r-squared indicates that the model explains just over 34% of the variance in the training data. Looking at the model evaluation plots, Normal Q-Q plot shows that the model struggles to predict `TARGET_WINS` at both tails of the distribution.  The Residuals vs. Leverage plot suggests that some observations may be influencing the regression.   Transforming some of the non-normally distributed predictors or removing outliers may improve the model
+
+```{r modelOne}
+# model based on imputed non-transformed
+modelOne <- 
+  lm(data = dfMDLTrain, formula = TARGET_WINS ~ . -INDEX -FIELDING_E_BC -PITCHING_H_BC -PITCHING_SO_BC -PITCHING_BB_BC)
+
+# review model, not all predictors significant
+# summary(modelOne)
+
+# use stepwise evaluating by AIC for variable selection
+modelOne <- stepAIC(modelOne, trace = 0)
+
+# review model
+summary(modelOne)
+
+# plot standard model review
+autoplot(modelOne)
+```
+
+## Model 2: imputation and transformation
+
+Box-Cox transformations applied to the most heavily skewed predictors and then the same stepwise AIC mechanism was employed for predictor selection.  The plots show that this model does not have the same issue with leverage that the first model had, but the adjusted r-squared is lower.  As with the first model the Normal Q-Q plot suggests that the model struggles to accurately predict at the tails of the distribution.  Removing outliers may help.
+
+```{r modelTwo}
+# model based on imputed non-transformed
+modelTwo <- 
+  lm(data = dfMDLTrain, formula = TARGET_WINS ~ . -INDEX -FIELDING_E -PITCHING_H -PITCHING_SO -PITCHING_BB)
+
+# review model, not all predictors significant
+# summary(mdlStepRaw)
+
+# use stepwise evaluating by AIC for variable selection
+modelTwo <- stepAIC(modelTwo, trace = 0)
+
+# review model
+summary(modelTwo)
+
+# plot standard model review
+autoplot(modelTwo)
+```
+
+## Model 3: imputation, transformation, and outlier removal
+
+As mentioned previously observations which were more than 3 MAD away from the median were considered to be potential outliers.  The adjusted r-squared for this model is the best of the three and reviewing the plots the residuals appear more normal than model one or two.
+
+```{r modelThree}
+modelThree <- 
+  lm(data = dfMDLTrain[!(dfMDLTrain$INDEX %in% outlierIndex), ]
+     , formula = TARGET_WINS ~ . -INDEX -FIELDING_E -PITCHING_H -PITCHING_SO -PITCHING_BB)
+
+# review model, not all predictors significant
+# summary(modelThre)
+
+# use stepwise evaluating by AIC for variable selection
+modelThree <- stepAIC(modelThree, trace = 0)
+
+# review model
+summary(modelThree)
+
+# plot standard model review
+autoplot(modelThree)
+```
+
+## Model 4: imputation and backward-elimination
+
+This model utilizes cross-validation and backward elimination as an alternative method of feature selection. The underlying data is the same as model 1.
+
+```{r modelFour}
+# model based on imputed non-transformed
+# use backward selection for choosing the best parameters
+
+# Set seed for reproducibility
+set.seed(123)
+# Set up repeated k-fold cross-validation
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model (use imputed data train without outliers)
+# We can try limiting the number of variables
+# This time we choose 14 (all of independent variables) for experiment
+step.model <- train(TARGET_WINS ~. -INDEX -FIELDING_E_BC -PITCHING_H_BC -PITCHING_SO_BC -PITCHING_BB_BC, data = dfMDLTrain,
+                    method = "leapBackward", 
+                    tuneGrid = data.frame(nvmax = 1:14),
+                    trControl = train.control
+                    )
+```
+```{r modelFourSumm, results='asis'}
+
+# See the results of tunning
+step.model$results %>% pandoc.table()
+
+# See the best tunning based on RMSE
+step.model$bestTune %>% pandoc.table()
+```
+```{r modelFourPlot}
+# Let's see the parameters for the best model from tunning
+# The algorithm suggests that best model is coming from # of variables = 6
+summary(step.model$finalModel)
+#coef(step.model$finalModel, 6)
+
+# Apply best parameters to model 4
+modelfour <- lm(data = dfMDLTrain, formula = TARGET_WINS ~ FIELDING_DP + FIELDING_E + BASERUN_SB + BATTING_SO + BATTING_HR + BATTING_H)
+
+# review model
+summary(modelfour)
+
+# plot standard model review
+autoplot(modelfour)
+```
+
+# Select model
+
+## Model statistics
+
+```{r mdlStats}
+# function to calculate model statistics
+mdlStats <- function(x){
+  
+  mdlsum <- summary(x)
+  
+  dfMdlStat <- 
+    data.frame(
+      c(mdlsum['r.squared']
+        ,mdlsum['adj.r.squared']
+        ,fstat = mdlsum[['fstatistic']]['value'])
+      , RMSE = rmse(x))
+  
+  return(dfMdlStat)
+}
+
+# create data frame of model stats for all models
+dfMdlStats <- 
+do.call(rbind
+        , list('model one' = mdlStats(modelOne)
+     , 'model two' = mdlStats(modelTwo)
+     , 'model three' = mdlStats(modelThree)
+     , 'model four' = mdlStats(modelfour)))
+
+dfPredStats <- 
+data.frame(
+  row.names = c('model one', 'model two', 'model three', 'model four')
+  , RMSE = c(
+    rmse(dfMDLEval$TARGET_WINS, predict(modelOne, dfMDLEval))
+    , rmse(dfMDLEval$TARGET_WINS, predict(modelTwo, dfMDLEval))
+    , rmse(dfMDLEval$TARGET_WINS, predict(modelThree, dfMDLEval))
+    , rmse(dfMDLEval$TARGET_WINS, predict(modelfour, dfMDLEval))))
+```
+
+In considering how to evaluate the models additional modeling statistics were produced.  Since the objective is to accurately predict `TARGET_WINS` the Root-Mean Square Error (RMSE) will be used as the primary metric for model evaluation.  The RMSE is proportionally effected by residuals so larger errors, worse predictions, have a larger impact on the score.
+
+__Model statistics__
+
+```{r mdlTable, results='asis'}
+dfMdlStats %>% pandoc.table()
+```
+
+Looking at the modeling statistics model three has the lowest RMSE. However since this model was created by removing approximately 450 potential outliers, this model has a greater potential to overfit the data.  The prediction table below shows that model three has the highest RMSE on the reserved evaluation data.  This suggests that this model was overfit to the training data.  Comparing the remaining two models, model one has both the highest adjusted r-squared and the smallest differential between RMSE on the training and reserved evaluation data.
+
+__Prediction statistics__
+
+```{r predTable, results='asis'}
+dfPredStats %>% pandoc.table()
+```
+
+## Prediction
+
+Predictions of `TARGET_WINS` using the evaluation data and selected model are included in the provided comma separated values (CSV) file.
+
+```{r evalDataPrep, include=FALSE}
+# apply same treatment to evaluation data as training data
+dfEvalMDL <- dfEval
+
+# add variables
+dfEvalMDL$BATTING_1B <- 
+  dfEval$BATTING_H - 
+  rowSums(dfEval[, paste0('BATTING_', c('2B', '3B', 'HR'))])
+
+# remove variables
+dfEvalMDL <- 
+  dfEvalMDL %>% 
+  dplyr::select(-BATTING_HBP, -PITCHING_HR)
+
+# imputation
+dfEvalMDL <- complete(mice(dfEvalMDL, printFlag = FALSE))
+
+# transform data using same lamda
+dfEvalMDL$FIELDING_E_BC <- 
+  dfEvalMDL$FIELDING_E^BXLambda['FIELDING_E']
+
+dfEvalMDL$PITCHING_H_BC <- 
+  dfEvalMDL$PITCHING_H^BXLambda['PITCHING_H']
+
+# pitching SO and BB have zero value adding 1 to allow box-cox transform
+dfEvalMDL$PITCHING_SO_BC <- 
+  (dfEvalMDL$PITCHING_SO)^BXLambda['PITCHING_SO']
+
+dfEvalMDL$PITCHING_BB_BC <- 
+  dfEvalMDL$PITCHING_BB^BXLambda['PITCHING_BB']
+
+# outliers, not needed as model three performed the worst
+
+# check for predictions CSV
+predCSV <- !any(grepl('groupTwoPredictions.csv', list.files(dataDir)))
+```
+```{r mdlSelctdPred, eval = predCSV}
+# predict TARGET_WINS for the evaluation data set
+dfEvalMDL$PREDICTED_WINS <- predict(modelOne, dfEvalMDL)
+  
+# write predicted values to CSV file
+dfEvalMDL %>%
+  dplyr::select(INDEX, PREDICTED_WINS) %>%
+  write.csv(x = ., file = file.path(dataDir, 'groupTwoPredictions.csv')
+            , row.names = FALSE)
+```
+
+<!-- # References -->
+
+# Appendix
+
+## Session info
+
+```{r, eval=TRUE}
+devtools::session_info()
+```
+
+## R source code
+
+See included Rmarkdown (rmd) document

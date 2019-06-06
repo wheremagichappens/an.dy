@@ -1,0 +1,653 @@
+---
+title: 'Homework #3: Logistic Regression'
+subtitle: 'CUNY SPS DATA 621 Spring 2019'
+author: 
+  - "Group # 4"
+date: "April 10, 2019"
+output: 
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 2
+---
+
+\newpage
+
+```{r setup, include=FALSE}
+# specify global knitr parameters
+knitr::opts_chunk$set(echo = FALSE)
+
+# Load libraries ----
+library(dplyr)          # Data manipulation
+library(tidyr)          # Data transformation
+library(purrr)          # Functional Programming
+library(tibble)         # simple data frames
+library(e1071)          # Misc stats functions
+library(pander)         # Pandoc tables
+library(ggplot2)        # visualization
+library(scales)         # Vis scale functions
+library(ggcorrplot)     # Vis corr matrix
+library(GGally)         # ggplot2 extensions
+library(ggmosaic)       # Mosaic plots
+library(DescTools)      #
+library(MASS)           # Support functions
+library(car)            # Applied regrssion tools
+library(pROC)           # 
+library(caret)          # 
+library(pscl)           # 
+
+```
+
+# Objective
+
+The the goal of this report is to develop a binary logistic regression model which can predict whether a neighborhood will be at risk for high crime levels.
+
+# Data exploration
+
+The major city is not explicitly stated in the data description does have a variables `chas` for whether a neighborhood borders the Charles River.  This suggests that the data comes from the Boston metropolitan area, even though we cannot use data outside of what was provided it does provide additional perspective when evaluating relationships across variables.
+
+```{r dataImport, include=FALSE, cache=TRUE}
+# Import data ----
+# data directory
+dataDir <- '/home/analysis/Documents/CUNY SPS/DATA621_SP19/Week08/'
+
+# training data
+dfDataTrain <- read.csv(file.path(dataDir, 'crime-training-data_modified.csv'))
+
+# eval data
+dfDataEval <- read.csv(file.path(dataDir, 'crime-evaluation-data_modified.csv'))
+
+# Verify import from data dictionary and case listing
+# str(dfDataTrain)
+# str(dfDataEval)
+
+# check for data dictionary file
+evlDD <- !any(grepl('DATA621HW3D.csv', list.files(dataDir)))
+
+```
+```{r extractDD, include=FALSE, eval=evlDD}
+# extract data dictionary from homework assignment PDF
+library(pdftools)
+
+# extract txt from first page of PDF split text by new line 
+pdfTxt <- strsplit(
+  pdf_text(file.path(
+    dataDir, 'DATA 621- HW#3 (crime) modified.pdf')), '\\n')[[1]]
+
+# limit data to data description
+pdfTxt <- pdfTxt[grepl('• \\w+\\: ', pdfTxt, perl=TRUE)]
+
+# remove bullet points
+pdfTxt <- gsub("• ", "", pdfTxt, perl=TRUE)
+
+# split string into variable and description
+dfDataDict <-
+  data.frame(raw = pdfTxt, stringsAsFactors = FALSE) %>%
+  extract(raw, c('variable', 'description'), regex = '(\\w+)\\: (.+)')
+
+# change description to proper case
+dfDataDict$description <- 
+  gsub('(^\\w)(.+)', '\\U\\1\\E\\2', dfDataDict$description, perl = TRUE)
+
+# write data frame to csv
+write.csv(dfDataDict, file.path(dataDir, 'DATA621HW3D.csv')
+          , row.names = FALSE)
+
+# clean global environment
+rm(pdfTxt, dfDataDict)
+```
+
+## Data dictionary
+
+The table below table below describes the variables in the dataset.
+
+```{r tblDD, results='asis'}
+# import CSV of data mape
+dfDMap <- read.csv(file.path(dataDir, 'DATA621HW3D.csv'))
+
+# replace . in column names w/ space
+colnames(dfDMap) <- gsub('\\.', ' ',  colnames(dfDMap))
+  
+# print PDF as markdown table
+dfDMap %>% pandoc.table()
+```
+
+## Summary statistics
+
+The training data set contains `r nrow(dfDataTrain)` observations and `r ncol(dfDataTrain)` variables including the response variable, `target`. Reviewing the summary statistics show that there are no missing values, of the 13 variables in the data set 12 are numeric and both `chas` and the response variable `target` are categorical.  The mean of `target` shows that there are slightly more neighborhoods with crime rates above the median which suggests that the underlying data may have had a slighly negative skew, but since the mean is relatively close to 0.5 there no special treatment such as sampling is required before classification can be implemented.
+
+```{r summaryCalc, warning=FALSE}
+# create a table summarizing the training data
+# create lists of desired summary stats for calculation
+statFuns <- 
+  funs(missing = sum(is.na(.))
+       , min = min(., na.rm = TRUE)
+       , Q1 = quantile(., .25, na.rm = TRUE)
+       , mean = mean(., na.rm = TRUE)
+       , median = median(., na.rm = TRUE)
+       , Q3 = quantile(., .75, na.rm = TRUE)
+       , max = max(., na.rm = TRUE)
+       , sd = sd(., na.rm = TRUE)
+       , mad = mad(., na.rm = TRUE)
+       , skewness = skewness(., na.rm = TRUE)
+       , kurtosis = kurtosis(., na.rm = TRUE)
+  )
+
+# create data frame of basic summary stats
+dfSumTrain <- 
+  dfDataTrain %>% 
+  summarise_all(statFuns) %>% 
+  gather() %>% 
+  separate(key, c('metric', 'stat'), sep = '(_)(?!.*_)') %>% 
+  spread(stat, value) %>% 
+  dplyr::select(metric, names(statFuns))
+```
+```{r summaryTable, results='asis'}
+# print summary stats as two tables for easier reading
+
+# stats for table 1
+vTbl1Stats <- c('metric', 'min', 'Q1', 'mean', 'median', 'Q3', 'max')
+
+pandoc.table(dfSumTrain[, vTbl1Stats], missing = '-')
+
+pandoc.table(dfSumTrain[
+  , c('metric', setdiff(colnames(dfSumTrain), vTbl1Stats))], missing = '-')
+
+# clean global environment
+rm(vTbl1Stats)
+```
+
+## Visualizations
+
+### Univariate distributions
+
+The plot below shows histograms and density plots for each numeric variable in the data. The visualizations show that some variables such as `age`, `dis`, and `lstat` are skewed and may benefit from transformation.  It also shows that several variables have a mode which far far exceeds other values in the data.  Also `rad` appears to be multimodal.  For these variables it may be beneficial to create dichotomous categorical variables instead of using the continuous values.
+
+```{r facetDensity, fig.align='center', warning=FALSE, fig.height=6, fig.width=8}
+# plot of density (histogram and density plot) for all variables
+dfDataTrain %>% 
+  dplyr::select(-chas, -target) %>% 
+  gather() %>% 
+  group_by(key) %>% 
+  ggplot(data = ., aes(value)) + 
+  geom_histogram(bins = 30, aes(y = ..density..)) +
+  geom_density(alpha = 0.3, color = NA, fill = 'grey20') + 
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::percent) +
+  facet_wrap(~key, scales = 'free') + 
+  labs(x = NULL, y = NULL) + 
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+The pie charts below reiterate the findings from the summary statistics for the two dichotomous variables; `target` is relatively evenly split while `chas` shows that that the majority of neighborhoods do not border Charles River.
+
+```{r facetPie, fig.align='center', warning=FALSE, fig.height=3, fig.width=6}
+# plot of density (histogram and density plot) for all variables
+dfDataTrain %>% 
+  dplyr::select(chas, target) %>% 
+  gather() %>% 
+  ggplot(data = ., aes(x = '',  group = value, fill=factor(value))) + 
+  geom_bar(width = 1) +
+  coord_polar('y', start=0) +
+  facet_wrap(~key) +
+  labs(x = NULL, y = NULL) +
+  theme_void() +
+  theme(axis.text.x = element_blank(), axis.ticks.y = element_blank()
+        , legend.position = 'right') + 
+  scale_fill_discrete(name = '')
+
+```
+
+### Bivariate relationships
+
+In the plot below the data has been split by the response variable; each plot contains two boxplots with a violin plot overlayed to show the distribution of each predictor for both classifications of `target`.  The plot shows that areas with older housing are more likely to have crime rates above the median and that for `rad` and `tax` appear to be multimodal in the higher than median crime rate group.
+
+```{r facetbox, fig.align='center', warning=FALSE, fig.height=6, fig.width=8}
+# scatterplot of TARGET_WINS against all predictors with GAM smoothing
+dfDataTrain %>% 
+  dplyr::select(-chas) %>% 
+  gather(key, value, -target) %>% 
+  group_by(key) %>% 
+  ggplot(data = ., aes(x = factor(target), y = value)) + 
+  geom_boxplot() + 
+  geom_violin(alpha = 0.3, color = NA, fill = 'grey20') + 
+  facet_wrap(~key, scales = 'free') + 
+  labs(x = 'target', y = NULL)
+```
+
+The mosaic plot below shows the relationship between `chas` and `target`.   The width of the bars shows the proportion of each categorization of `chas` while the height and color show the proportion of `target`.  As seen previously neighborhoods which do not border Charles River are the majority, but it does show that those that do border Charles River are more likely to be in a neighborhood with a higher than median crime rate.
+
+```{r catBivariate, fig.align='center', warning=FALSE, fig.height=3, fig.width=6}
+dfDataTrain %>% 
+  dplyr::select(chas, target) %>% 
+  transmute_all(funs(factor)) %>% 
+  ggplot(data = .) + 
+  geom_mosaic(aes(x = product(target, chas), fill = target)) + 
+  labs(x = 'chas', y = 'target') + 
+  theme(axis.line = element_blank()
+        , panel.grid.major = element_blank()
+        , panel.grid.minor = element_blank()
+        , panel.border = element_blank()
+        , panel.background = element_blank()) 
+
+```
+
+<!-- #### Correlation matrix -->
+
+```{r corrPlot, fig.align='center', warning=FALSE, fig.height=6, fig.width=8, eval=FALSE}
+# correlation matrix provides a better visual, but overlaps with the information in the pairs plot
+
+# Calculate pairwise pearson correlation and display as upper matrix plot
+dfDataTrain %>%
+  cor(method = 'pearson', use = 'pairwise.complete.obs') %>%
+  ggcorrplot(corr = ., method = 'square', type = 'upper'
+             , lab = TRUE, lab_size = 3, lab_col = 'grey20')
+```
+
+#### Pairs plot
+
+Previously the visualizations have focused on the relationship with `target`.  The pairs plot provides and idea of the relationships between all variables in the data.  A Few notable relationships are between `nox` and `dis` and `medv` and `lstat`.  In the prior higher levels of nitrogen oxide show a polynomial relationship with distance to a Boston Employment center.  It is unlikely that these two variables have a direct relationship, but a higher level of `nox` and shorter `dis` could be indicative of higher population density compared to other regions.  Similarly `medv` and `lstat` show a polynomial relationship.  Unlike `nox` and `dis` this could have a more direct relationship as areas with fewer lower status people can directly impact the median house prices.  It is also shown that neighborhoods near Charles River have shorter distances to Empolyment centers, `dis`, and more people of lower status.
+
+```{r pairsPlot, fig.align='center', warning=FALSE, fig.height=12, fig.width=10}
+# Calculate pairwise pearson correlation and display as upper matrix plot
+dfDataTrain %>% 
+  mutate_at(funs(factor), .vars = c('target', 'chas')) %>% 
+  ggpairs(data = ., progress = FALSE, lower = list(combo=wrap("facethist",  
+binwidth=0.5))) + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Multicollinearity
+
+The pairs plot showed that a number of predictors had very strong  Pearson correlation coefficients, $|r| > 0.75$, which could suggest multicollinearity in the data.  As a preliminary test a logit link logistic regression was produced using all the predictors originally provided in the data and the VIF was calculated on the resulting model. No VIF is greater than 10 that there isn't an inherent need to address multicollinearity, but a few are above 3 which could mean that these variables may benefit from modification.
+
+```{r vifTabel, fig.align='center', results='asis', warning=FALSE}
+# calculate VIF for original predictors
+data.frame(
+  vif = car::vif(
+    glm(target ~ .
+        , data=dfDataTrain
+        , family = binomial(link='logit')))) %>% 
+  rownames_to_column(var = "variable") %>% 
+  pandoc.table()
+```
+
+# Data preparation
+
+## Missing values
+
+Both the training and evaluation data set are complete, no missing observations.
+
+## Variable creation
+
+Both `rad` and `tax` appear to have bimodal distributions and the box plots grouped by `target` suggest that the data around the lower mode is typically associated with areas that have lower than median crime rates.  `indus` and `age` do not show as clear a divide as the other variables, but do have a similar spike at higher values.  For all three variables a binary variable will be created by splitting based on the visualization.
+
+```{r drvVariable}
+# create function to split variable into dichotomous factor
+bnryFct <- function(x, split){
+  y <- numeric(length = length(x))
+  y[x > split] <- 1
+  y <- factor(y)
+  return(y)}
+
+# create dichotomous variable for high/low rad, split based on visualization
+dfDataTrain$hghRad_drv <- bnryFct(dfDataTrain$rad, 15)
+
+# high/low for tax, split based on visual
+dfDataTrain$hghTax_drv <- bnryFct(dfDataTrain$tax, 550)
+
+# high/low for industry
+dfDataTrain$hghIndus_drv <- bnryFct(dfDataTrain$indus, mean(dfDataTrain$indus))
+
+# high/low for age
+dfDataTrain$hghIndus_drv <- bnryFct(dfDataTrain$age, median(dfDataTrain$indus))
+
+# remove function from global env
+# rm(bnryFct$tax)
+
+# dfDataTrain %>%
+#   gather(key, value, -hghIndus_drv) %>%
+#   # mutate(target = factor(target)) %>%
+#   ggplot(data = ., aes(x = value, group =hghIndus_drv, fill = hghIndus_drv)) +
+#   geom_density(alpha = 0.4) +
+#   facet_wrap(~key, scales = 'free')
+```
+
+## Transformations
+
+### Log
+
+The summary statistics and visualization showed that the variables `dis` and `lstat` have a positive skew.  In both the skew is in the range of $\pm1$, given the number of observations in the data a transformation is not necessary for modeling, but would simplify the interperetation of the $\beta$ for these predictors.
+
+```{r transLog, warning=FALSE, fig.height=3, fig.width=6}
+# function to apply log transformation
+lgtrsm <- function(x){
+  # modify log transformation to account for direction of skew
+  if(skewness(x) > 0)
+    {log(x)}
+  else
+  {log(1 + max(x)-x)}
+  }
+
+# apply log to heavily skewed variables
+dfDataTrain <- 
+dfDataTrain %>%
+  mutate_at(funs(logTsfm = lgtrsm), .vars = c('dis', 'lstat'))
+
+# dfDataTrain %>%
+#   mutate_at(funs(logTsfm = log), .vars = c('dis', 'lstat'))
+
+# plot histogram to show impact of box-cox
+dfDataTrain %>% 
+  dplyr::select(ends_with('logTsfm')) %>% 
+  gather() %>% 
+  ggplot(data = ., aes(value)) + 
+  geom_histogram(bins = 30, aes(y = ..density..)) +
+  geom_density(alpha = 0.3, color = NA, fill = 'grey20') + 
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::percent) +
+  facet_wrap(~key, scales = 'free') + 
+  labs(x = NULL, y = NULL)
+
+# clean global environment, remove log transformation function
+# rm(lgtrsm)
+```
+
+###  Box-Cox
+
+The summary statistics and historgram for `medv` show a bit of skew and kurtosis.  It is small enough that it may not negatively impact its use as a predictor, however for purposes of experiementation in model development it has been transformed.  Initially a log transformation was attempted, but in reviewing the transformed distribution a Box-Cox transformation showed better results.
+
+```{r transBoxCox, warning=FALSE, eval=TRUE, fig.height=3, fig.width=6}
+# apply box-cox power transformations to heavily skewed variables
+# also tried on nox,age,ptratio, but mediocre results
+BXLambda <- 
+dfDataTrain %>% 
+  dplyr::select(medv) %>% 
+  map_dbl(function(x){powerTransform(x)$lambda})
+
+for(i in seq_along(BXLambda))
+  dfDataTrain[
+    paste0(names(BXLambda)[i], '_BxCxtsfm')] <- 
+  dfDataTrain[names(BXLambda)[i]]^as.numeric(BXLambda[i])
+
+rm(i)
+
+# plot histogram to show impact of box-cox
+dfDataTrain %>% 
+  dplyr::select(ends_with('BxCxtsfm')) %>% 
+  gather() %>%
+  ggplot(data = ., aes(value)) +
+  # ggplot(data = ., aes(age_BxCxtsfm)) +
+  geom_histogram(bins = 30, aes(y = ..density..)) +
+  geom_density(alpha = 0.3, color = NA, fill = 'grey20') + 
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::percent) + 
+  facet_wrap(~key, scales = 'free')
+```
+
+## Outliers
+
+The histogram and box-plots suggest show that there are a few data points which could be considered outliers.  Some of these outliers may be explainable with additional context from external data sources, however the project description prohibts this method.  In order to handle potential outliers winsorizing will be employed.  Any values outside outside of the [5%, 95%] range will be substitiuted witht the value for 5% or 95% respectively.
+
+```{r}
+# remove outliers through winsorizing
+dfDataTrain <- 
+dfDataTrain %>% 
+    mutate_if(is.numeric, funs(Winsorize(x = .)))
+
+```
+
+# Build models
+
+For purposes of model development and evaluation the training data is split 70/30 with 70% of the data being used for model development, and 30% being used to evaluate the model.
+
+```{r mdlSplit}
+# change binary variables to factors
+vctCols <- c('chas', 'target')
+
+dfDataTrain[, vctCols] <- lapply(dfDataTrain[, vctCols], factor)
+
+dfDataEval[, 'chas'] <- factor(dfDataEval$chas)
+
+rm(vctCols)
+
+# Create index to split data set
+dfDataTrain$index <- 1:nrow(dfDataTrain)
+
+# set seed for split to allow for reproducibility
+set.seed(20190410L)
+
+# use 70% of the data for model development
+dfMDLTrain <- 
+dfDataTrain %>% 
+  sample_frac(size = 0.7)
+
+# retain remainder of data for evaluating model accuracy
+dfMDLEval <- 
+  dfDataTrain %>% 
+  anti_join(dfMDLTrain, by = 'index')
+
+# remove index from training data
+dfDataTrain$index <- NULL
+
+```
+
+## Model 1: logit original predictors
+
+This classification model makes use of a logit link and makes use of all the predictors originally provided from the data set.  Reviewing the model we see that the $\beta$ for `nox` is fairly large,as the parts per million of nitrogen oxide the more likely a neighborhood is to have an above median crime rate.  This type of pollution can come from vehicles and could be suggestive of a more densly populated area, while not always the case that could, logically, result in a higher crime rate.  Similarly we see that neighborhoods with more plots zoned for larger housing, houses with more rooms, higher taxes, more expensive houses, and less industry are less likely to have an above median crime rate.  Using the McFadden $R^{2}$ as mechanism to evaluate how well the model fits the training data we see that the full model fits reasonably well.  However the full model contains a number of predictors which are not statistically significant so there is the potential for improvement.
+
+```{r modelOne,warning=FALSE}
+# TODO -- look into warning "glm.fit: fitted probabilities numerically 0 or 1 occurred"
+
+# create logit model with original predictors
+mdl1 <- glm(target ~ .-index
+              , data=dfMDLTrain[, -grep("_", colnames(dfMDLTrain))]
+              , family = binomial(link='logit'))
+
+summary(mdl1)
+print(pscl::pR2(mdl1)['McFadden'])
+```
+
+## Model 2: logit original predictor stepAIC feature selection
+
+This model builds on the original predictor logit by using backward and forward stepwise selection to choose predictors.  The `stepAIC` function from the `MASS` package makes use of the Akaike Information Criterion ([AIC](https://en.wikipedia.org/wiki/Akaike_information_criterion)) for model selection.  Compared to the all predictor logit the AIC is slightly lower suggesting an increase in model perfomance; this is further supported by a higher McFadden $R^{2}$.  While the coefficients are different the relationships between whether an increase in predictor mean a neighborhood is more/less likely to have a higher than median crime rate are the same.
+
+
+```{r modelTwo, warning=FALSE}
+# use stepAIC backward/forward stewise method for feature selection
+mdl2 <- stepAIC(mdl1, trace = FALSE)
+
+summary(mdl2)
+print(pscl::pR2(mdl2)['McFadden'])
+```
+
+## Model 3: logit original and derived predictor stepAIC feature selection
+
+In the exploratory data analysis several predictors could benefit from transformation and the pairs plot and vif suggested that some variables may have some multicollinearity. As described in the data preparation section several variables were transformed and dichotomous predictors were created.  This model makes use of `stepAIC` building off a full model including both the original, transformed, and derived variables.  Comparing the AIC and McFadden $R^{2}$ suggests a slightly more performant model.  One confound is that stepAIC included both the original and log-transformed version of `lstat`.  This could be indicative of interaction or multicollineartiy between with another predictor, however only one version of `lstat` should be included.
+
+```{r modelThree,warning=FALSE}
+# create logit model with all predictors, stepAIC for feature selection
+
+mdl3 <- suppressWarnings(
+  stepAIC(glm(target ~ .-index, data=dfMDLTrain
+              , family = binomial(link='logit')), trace = FALSE))
+
+summary(mdl3)
+print(pscl::pR2(mdl3)['McFadden'])
+```
+
+## Model 4: polynomials and interaction
+
+The vif showed that there was some potential for multicollinearity between predictors and the pairs plot shows that some of the relationships between variables may be more complex than a simple linear relationship.  Additionally the plot below of the predicted probability of model 3 against all numeric predictors shows that `rad` and `tax` have a clear break in values which could suggest the absence of a predictor or relationship.
+
+```{r}
+dfMDLEval %>% 
+  mutate(predProb = predict(mdl3, dfMDLEval, type = 'response')) %>% 
+  mutate(logit = log(predProb/(1-predProb))) %>% 
+  dplyr::select_if(is.numeric) %>% 
+  dplyr::select(-predProb, -index) %>% 
+  gather(key = "predictors", value = "predictor.value", -logit) %>% 
+  ggplot(data = ., aes(logit, predictor.value))+
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "loess") + 
+  facet_wrap(~predictors, scales = "free_y")
+
+```
+
+Exploring inclusion of polynomials and interaction terms produced a model marginally more performant than model 3, but with a much more complicated interpretation.
+
+```{r modelFour,warning=FALSE}
+# create logit model with all predictors, stepAIC for feature selection
+
+mdl4 <- suppressWarnings(
+  stepAIC(glm(target ~ .
+              +poly(medv,2)*tax
+              +rad*nox
+              +rad*dis_logTsfm
+              -index
+              -dis
+              -hghIndus_drv
+              -hghTax_drv
+              -lstat
+              -medv_BxCxtsfm
+              , data=dfMDLTrain
+              , family = binomial(link='logit')), trace = FALSE))
+
+summary(mdl4)
+print(pscl::pR2(mdl4)['McFadden'])
+```
+
+
+# Select model
+
+Reviewing the model statistics the AIC and McFadden $R^{2}$ suggest that model four is the most performant, but has a more complex model.
+
+The project description does not describe the ultimate purpose of this analysis, in lieu of an explicit objective, the model decision will be based on accuracy of the predictions on the reserved training data.
+
+## ROC
+
+The plot below shows the ROC curve for all models.  These models and underlying data will be employed to select the optimal threshold for classification.
+
+```{r rocPlot, fig.align='center'}
+# calculate ROC curve data
+dfROC <- 
+  data.frame(target = as.numeric(dfMDLTrain$target) -1
+             , mdlOne = mdl1$fitted.values
+             , mdlTwo = mdl2$fitted.values
+             , mdlThree = mdl3$fitted.values
+             , mdlFour = mdl4$fitted.values) %>% 
+  gather(model, value, -target) %>% 
+  mutate(positive = target == 1) %>% 
+  group_by(model, value) %>% 
+  summarise(positive = sum(positive)
+            , negative = n() - sum(positive)) %>% 
+  arrange(-value) %>% 
+  mutate(TPR = cumsum(positive) / sum(positive)
+         , FPR = cumsum(negative) / sum(negative)) %>% 
+  ungroup() %>% 
+  mutate(model = gsub('^mdl', '', model))
+
+# calculate AUC
+dfAUC <- 
+  dfROC %>% 
+  group_by(model) %>% 
+  summarise(AUC = sum(diff(FPR) * na.omit(lead(TPR) + TPR)) / 2)
+
+# plot AUC for each mode
+ggplot(data = dfROC, aes(FPR, TPR, color = model)) +
+  geom_line(alpha = 0.4, size = 1.25) +
+  geom_abline(lty = 2) +
+  labs(title = 'ROC', x = '(1 - specificity)', y = 'sensitivity') +
+  theme(legend.position = 'bottom')
+
+```
+
+## Model statistics
+
+The table below shows the accuracy of the predictions on the reserved training data.  Despite having a slighly higher McFadden $R^{2}$ model four is no better at predicting whether a neighborhood is more likely to have a higher than median crime rate.  Given the same accuracy the more easily interpreted model 3 will be the selected model.
+
+
+```{r modelStats, fig.align='center', results='asis'}
+# find all models in the global environment
+lstMdl <- mget(ls(pattern = 'mdl'))
+
+fcnModelStats <- function(mdl, data){
+  thrsh <- 
+    pROC::coords(
+      pROC::roc(as.numeric(data$target)-1
+            , predict(mdl, data, type = 'response'))
+      , "best", "threshold")['threshold']
+
+  mdlStats <- caret::confusionMatrix(
+      factor(as.numeric(predict(mdl, data, type = 'response')
+                        > as.numeric(thrsh)), 0:1)
+    , data$target)
+
+  metrics <- c('Accuracy' = as.numeric(mdlStats$overall[c('Accuracy')]))
+
+  return(metrics)
+}
+
+# apply fcnModelStats too each all models
+do.call(rbind, lapply(lstMdl, fcnModelStats, data = dfMDLEval)) %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "model") %>% 
+  pandoc.table()
+
+rm(lstMdl)
+```
+
+## Prediction
+
+Predictions of `target` using the evaluation data and selected model are included in the provided comma separated values (CSV) file.
+
+```{r predictPrep}
+# create dichotomous variable for high/low rad, split based on visualization
+dfDataEval$hghRad_drv <- bnryFct(dfDataEval$rad, 15)
+
+# high/low for tax, split based on visual
+dfDataEval$hghTax_drv <- bnryFct(dfDataEval$tax, 550)
+
+# high/low for industry
+dfDataEval$hghIndus_drv <- bnryFct(dfDataEval$indus, mean(dfDataTrain$indus))
+
+# high/low for age
+dfDataEval$hghIndus_drv <- bnryFct(dfDataEval$age, median(dfDataTrain$indus))
+
+# apply log transforms
+dfDataEval <- 
+dfDataEval %>%
+  mutate_at(funs(logTsfm = lgtrsm), .vars = c('dis', 'lstat'))
+
+```
+```{r applyPrediction, eval=FALSE}
+
+# predict evaluation data set using full model
+data.frame(
+  target = 
+    as.numeric(
+      predict(mdl3, dfDataEval, type = 'response') > 
+        pROC::coords(
+          pROC::roc(as.numeric(dfDataTrain$target)-1
+                    , predict(mdl3, dfDataTrain, type = 'response'))
+          , "best", "threshold")['threshold'])
+             ) %>% 
+  write.csv(x = . ,
+            file.path(dataDir, 'HW3_pred.csv'), row.names = FALSE)
+
+```
+
+
+<!-- # References -->
+
+# Appendix
+
+## Session info
+
+```{r, eval=TRUE}
+devtools::session_info()
+```
+
+## R source code
+
+See included Rmarkdown (rmd) document
