@@ -1,0 +1,586 @@
+---
+title: 'Mushroom classification'
+subtitle: 'CUNY SPS DATA 621 Spring 2019 - Final Project'
+author: 
+
+  - "Sang Yoon (Andy) Hwang"
+
+date: "May 22, 2019"
+output: 
+  pdf_document:
+    number_sections: no
+    toc: yes
+    toc_depth: 2
+urlcolor: blue
+bibliography: bib621Final.bib
+nocite: '@*'
+---
+
+\newpage
+
+```{r setup, include=FALSE}
+# specify global knitr parameters
+knitr::opts_chunk$set(echo = FALSE)
+
+# Load libraries ----
+library(dplyr)          # Data manipulation
+library(tidyr)          # Data transformation
+library(purrr)          # Functional Programming
+library(tibble)         # simple data frames
+library(arsenal)        # functions for large-scale stat summaries
+library(ggplot2)        # visualizations
+library(Boruta)         # Feature selection
+library(mice)           # multivariate imputations
+library(fastDummies)    # functions for dummy variable creation
+library(caret)          # Classificationn and regression training
+library(randomForest)   # random forest functions
+library(foreach)        # foreach loop for R
+library(parallel)       # support for parallel computation
+library(doParallel)     # foreach parallel
+library(ggfortify)      # Vis for model results
+library(rpart)          # recursive partition and regression trees
+library(C50)            # Decision Trees and Rule-Based Models
+library(pander)         # pandoc writer for R
+
+```
+
+```{r dataImport, include=FALSE, cache=TRUE}
+# Import data ----
+# data directory
+dataDir <- '/home/analysis/Documents/CUNY SPS/DATA621_SP19/Final/Data/'
+
+# training data
+dfDataTrain <- read.csv(
+  file.path(dataDir, 'agaricus-lepiota.data')
+  , header = FALSE, stringsAsFactors = FALSE)
+
+# Import header details and change letters to full names for easier reading
+dfDataMap <- read.csv(file.path(dataDir, 'dataMap.csv')
+                      , stringsAsFactors = FALSE)
+
+# Verify import from data dictionary and case listing
+# str(dfDataTrain)
+# str(dfDataMap)
+
+# change - to _ to remove need to escape character handling
+dfDataMap$attribute_name <- gsub('-', '_', dfDataMap$attribute_name)
+
+# rename columns from df data training
+colnames(dfDataTrain) <- unique(dfDataMap$attribute_name)
+
+# add index column
+dfDataTrain$index <- 1:nrow(dfDataTrain)
+
+# replace codes with full names, make all chracter variables factors
+dfDataTrain <- 
+  dfDataTrain %>% 
+  gather(attribute_name, attribute_code, -index) %>% 
+  left_join(dfDataMap
+            , by = c('attribute_name', 'attribute_code')) %>% 
+  dplyr::select(-attribute_code) %>% 
+  spread(attribute_name, attribute_description) %>% 
+  mutate_if(is.character, list(~factor))
+
+# change all factors with implicit order to ordered factors
+dfDataTrain$ring_number <- ordered(dfDataTrain$ring_number)
+dfDataTrain$target <- 
+  ordered(dfDataTrain$target, levels = c('poisonous', 'edible'))
+
+```
+
+```{r MiceImput, cache=TRUE, warning=FALSE, message=FALSE}
+# recategorize stalk_root observations coded as missing using MICE
+
+# retain missing for review
+retainMissing <- dfDataTrain$index[dfDataTrain$stalk_root == 'missing']
+
+# change missing to NA
+dfDataTrain$stalk_root[dfDataTrain$index %in% retainMissing] <- NA
+
+# use mice for imputation
+miceDataTrain <- mice(dfDataTrain, printFlag = FALSE
+                    , method = 'pmm', maxit = 1)
+
+# store imputed data in data frame
+dfDataTrain <- complete(miceDataTrain)
+
+```
+
+```{r catVarTable, results='asis', cache=TRUE}
+# create markdown table for categorical variables
+catTable <- 
+dfDataTrain %>%
+  dplyr::select(-index) %>% 
+  tableby(target ~ ., data=.)
+
+# print markdown table
+# summary(catTable)
+
+```
+
+```{r comparisonPlot, warning=FALSE, fig.height=12}
+# dodged bar plot of all predictors split by target classification
+pltDdgBar <-
+  dfDataTrain %>% 
+  dplyr::select(-index) %>% 
+  gather(key, value, -target) %>% 
+  ggplot(data = ., aes(x = value, fill = target)) + 
+  geom_bar(position = 'dodge') + 
+  facet_wrap(~key, scales = 'free') + 
+  # coord_flip() + 
+  theme_bw() + 
+  labs(x = NULL, y = NULL) + 
+  theme(legend.position = 'top') + 
+  scale_fill_discrete(name = '', drop=FALSE) + 
+  scale_x_discrete(drop=FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 5)
+                  , strip.text.x = element_text(size = 5))
+
+# display plot
+# pltDdgBar
+
+```
+
+```{r borutaOrigPred}
+# calculate Bortua using all the original predictors
+tstBoruta <- 
+  Boruta(dfDataTrain[, setdiff(colnames(dfDataTrain), c('target', 'index'))]
+         , dfDataTrain$target)
+
+# print variable importance metric plot
+# plot(tstBoruta)
+
+# review decision on each predictor
+# tstBoruta$finalDecision
+
+# sort predictor by highest VIM
+# sort(abs(tstBoruta$ImpHistory[nrow(tstBoruta$ImpHistory), ])
+#      , decreasing = TRUE)
+
+```
+
+```{r varManipulation}
+# drop veil_type only one category, no information value
+dfDataTrain <- 
+  dfDataTrain %>% 
+  dplyr::select(-veil_type)
+
+# retain original predictors for dummy variable creation later in script
+vctColNames <- setdiff(colnames(dfDataTrain), c('target', 'index'))
+
+# create predictors
+# bar plot showed that most poisonous have anise, almond, or no odor
+dfDataTrain$safeOdor <- 0
+dfDataTrain$safeOdor[dfDataTrain$odor %in% c('anise', 'almond', 'none')] <- 1
+
+# bar plot showed that only poisonous mushrooms had green spores
+dfDataTrain$safeSpore <- 0
+dfDataTrain$safeSpore[dfDataTrain$spore_print_color != 'green'] <- 1
+
+# bar plot gill color
+dfDataTrain$safeGillColor <- 0
+dfDataTrain$safeGillColor[
+  dfDataTrain$gill_color %in% c('chocolate', 'buff')] <- 1
+
+# xtabs(data = dfDataTrain[dfDataTrain$odor == 'none', ]
+#       , formula = ~ stalk_surface_below_ring
+#       + stalk_color_above_ring + target)
+
+dfDataTrain$psnSCAR_SSBR <- 0
+dfDataTrain$psnSCAR_SSBR[
+  dfDataTrain$odor == 'none' & dfDataTrain$stalk_surface_below_ring == 'scaly'
+  & dfDataTrain$stalk_color_above_ring != 'brown'] <- 1
+
+
+# cross tabs
+# table(dfDataTrain$target[dfDataTrain$habitat == 'leaves' &
+#                      dfDataTrain$cap_color == 'white'])
+
+dfDataTrain$psnHabClr <- 0
+dfDataTrain$psnHabClr[dfDataTrain$habitat == 'leaves'
+                      & dfDataTrain$cap_color == 'white'] <- 1
+
+```
+
+```{r dummify, warning=FALSE}
+# create dummy variables to be added back into data if necessary
+
+# create dummy variables for all predictor factors
+dfDataTrainDummy <-
+  dfDataTrain %>%
+  dummy_columns(select_columns = vctColNames, remove_first_dummy = TRUE) %>%
+  dplyr::select(-vctColNames, -target)
+
+```
+
+```{r mdlSplit}
+# set seed for split to allow for reproducibility
+set.seed(20190522L)
+
+# use 70% of the data for model development
+dfMDLTrain <- 
+dfDataTrain %>% 
+  sample_frac(size = 0.7)
+
+# retain remainder of data for evaluating model accuracy
+dfMDLEval <- 
+  dfDataTrain %>% 
+  anti_join(dfMDLTrain, by = 'index')
+
+# confirm that sampling is consistent
+# prop.table(table(dfMDLTrain$target))
+# prop.table(table(dfMDLEval$target))
+
+```
+
+# Abstract
+
+Technology has changed almost every aspect of human life.  Advancements in computing, farming, and statistical/machine learning have equipped us with the tools to immediately access information and accomplish tasks previously unthinkable.  These advancements have also become a crutch making knowledge which a few decades prior difficult to master.  Mushroom foraging is one of those tasks, for the past 30 years people have made use of a data set with detailing a mushrooms physical attributes and whether or not they are edible has been a popular data set to showcase machine learning techniques which trivialize the process of determining the toxicity of a mushroom for a computer, but are to abstract for an individual to internalize and use without the aid of technology.  The goal of this paper is to use machine learning to create a model which can accurately identify edible/poisonous mushrooms that an individual can use to learn how to do it without the aid of technology.
+
+_Keywords: Classification, Boruta, Logistic regression, Recursive Feature Elimination method, C5.0_
+
+# Introduction
+
+Remaining healthy today is much more than annual visits to a primary care physician, reducing stressors, and 30-minute cardio workouts. Studies have shown that our diets are essential and assume the role of the majority in the 80-20 algorithm of health. The adage, “you are what you eat” has caused many to choose lifestyles such as pescatarian to vegan. As an alternative to meat, mushrooms are an acclaimed substitute boasting health promoting properties.  
+
+The gathering of mushrooms, known as “foraging” has become relevant of late. Based on Google Trends data from 2004 to the time of writing, one can see how interest has remained constant in certain regions of the country. On the west coast, states like Washington, Oregon, and California while the east coast has data in New York and Massachusetts.[^1]
+
+[^1]: [Google Trends: searches for mushroom foraging in the United States of America](https://trends.google.com/trends/explore?date=all&geo=US&q=mushroom%20foraging)
+
+In regards to our project, the goal is to cultivate a model which is "actionable" for a mushroom hunter who is going out foraging.  With toxic mushrooms being an outcome to avoid our team hypothesis will be if edible mushrooms can be classified by their features.
+
+# Literature review
+
+The Mushroom Classification data set is popular being referenced in over 40 papers.  Many of these papers focus on the use of advance clustering, machine learning, or feature selection techniques, such as Naive Bayes classification.  These techniques are powerful that with little or no tuning they can achieve near perfect accuracy.  One disadvantage of these techniques is that their interpretation can be quite abstract, a computer provided with data can efficiently classify new observations, but can be difficult for a person to internalize and apply themselves.
+
+Our focus is on the papers which focus on feature selection.  These techniques can identify the most important features for classifying the response variable as well as interactions between predictors.  Among the techniques reviewed; Correlation-Based Filter approaches were computationally efficient and easy to interpret, but are more performant on numeric or ordered data rather than categorical. Other papers address this limitation by working iteratively and applying heuristic methods to improve decision selections. Alternatively probabilistic approaches can reduce reliance on heuristics with more mathematically focused process to find the optimal set of features, at a computational cost.  We will make use of alternative feature selection methods not explicitly referenced seen in existing literature.
+
+# Methodology
+
+The mushroom classification data set is clean and well structured that minimal data preparation is required before analysis can be done.  The only explicit requirement is in how to handle the observations for `stalk_root` which are categorized as missing -- these were handle through imputation.  New features were created based on evaluating cross tabulations and visualizations of the predictors broken out by each response category and then three different techniques were employed to develop an accurate, actionable model.  First, Boruta was used for feature selection and the selected features were used in a logistic regression, second was Recursive Feature Selection, and finally the C5.0 classification algorithm.
+
+# Experimentation
+
+## Data acquisition/preparation
+
+The data come from a Field Guide to North American Mushrooms[^2] and were prepared and shared by Jeff Schlimmer with the University of California Irvine Machine Learning Repository[^3].  The data contain a total of 8214 observations and 22 attributes all of which are categorical.  As provided the data requires little manipulation before analysis can be done.
+
+[^2]: [The Audubon Society Field Guide to North American Mushrooms (1981). G. H. Lincoff (Pres.), New York: Alfred A. Knopf ISBN: 9780394519920](
+https://www.penguinrandomhouse.com/books/119969/national-audubon-society-field-guide-to-north-american-mushrooms-by-national-audubon-society/
+)
+
+[^3]:[CUI ML Repository](http://archive.ics.uci.edu/)
+
+### Missing data
+
+The one exception is the variable `stalk_root` which has a number of observations coded as _missing_. In total `r length(retainMissing)` observations are coded as missing which amounts to $\approx$ `r paste(round(length(retainMissing)/nrow(dfDataTrain), 4)*100, '%', sep = '')` of the data.  These observations seemed to be missing at random and two mechanisms were considered to avoid dropping those observations. One was to treat _missing_ as a distinct category and alternatively to re categorize `stalk_root` for those observation using multiple imputation.  Neither is ideal, treating them as a distinct category has the potential to obfuscate combinations of attributes of a mushroom that could be used to determine their toxicity and multiple imputation techniques become less performant as the percent of missing observations exceeds 25% of the data.  Since the ultimate objective is to create an actionable model that an individual can employ when foraging being able to identify interactions and combinations of attributes of mushrooms was a priority Multiple Imputation Chained Equations [MICE)[^4] was employed to recategorize those observations.
+
+[^4]: [Multiple Imputation by Chained Equations: What is it and how does it work?](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3074241/)
+
+### Feature engineering
+
+With all attributes in the data being categorical creating a full model results in a high number of predictors.  Attempting to include interactions between predictors has the potential to lead to multicolinearity or saturation.  To avoid this new features have been created which work to encompass relationships between multiple categories of predictors and response variable as well as interaction between predictors.
+
+The approached used for feature engineering is largely heuristic, if cross-tabulation ,_[Table 1]_, or visualization, _[Figure 2]_, showed a consistent relationship between the toxicity of a mushroom a feature was created.  Similarly if there were no information value from a predictor, such as `veil_type` where all observations were categorized as _partial_ it was removed.
+
+## Modeling
+
+The literature review illustrated that a wide variety of methods for modeling and feature selection can be successful in creating a model with near perfect accuracy.  With our objective that any model created needs to be actionable so even a novice can identify whether a mushroom is edible or poisonous the decision for modeling was to employ a variety of modeling and feature selection techniques with the constraint that there can be no more than 4 attributes -- including all categories within that attribute.
+
+### Baseline
+
+Assuming all mushrooms to be poisonous nets a `r paste(round(mean(dfMDLTrain$target == 'poisonous')*100,2), '%', sep = '')` accuracy, any model developed needs to surpass this accuracy.
+
+### Feature selection
+
+#### Boruta & logit
+
+```{r logitBorutaManual, warning=FALSE}
+# find top 3 predictor by VIM
+brtaVarsSlct <- paste('`', names(sort(abs(tstBoruta$ImpHistory[nrow(tstBoruta$ImpHistory), ])
+     , decreasing = TRUE)[1:4]), '`', collapse = ', ', sep = '')
+
+# create logit
+mdl_brtaLgt_01 <- glm(dfMDLTrain
+              , formula = target ~ spore_print_color + odor 
+              + gill_size + gill_spacing
+              , family = binomial(link='logit'))
+
+# review results
+# summary(mdl_brtaLgt_01)
+
+# find optimal threshold for logit
+thrsh <- pROC::coords(
+      pROC::roc(as.numeric(dfMDLTrain$target)-1
+            , predict(mdl_brtaLgt_01, dfMDLTrain, type = 'response'))
+      , "best", "threshold")['threshold']
+
+# calculate summary stats of model on training data
+smry_brtaLgt_01 <- 
+caret::confusionMatrix(data = ordered((mdl_brtaLgt_01$fitted.values > thrsh)+0)
+                       , ref = ordered(as.numeric(dfMDLTrain$target)-1))
+ 
+# calculate summary stats of model on reserved eval data.
+eval_brtaLgt_01 <- 
+caret::confusionMatrix(
+  data =
+    ordered(as.numeric(predict(mdl_brtaLgt_01
+                               , dfMDLEval, type = 'response') > thrsh))
+  , ref = ordered(as.numeric(dfMDLEval$target)-1))
+
+```
+
+Three different methods of feature selection were employed in order to develop models. The first will utilize Boruta[^5] and manual forward selection.  Boruta is a algorithm built on top of Random Forest for feature selection. The algorithm returns a variable importance metric (VIM) along with an estimation of whether a variable is statistically significant. A weakness of Boruta's algorithm is that the VIM can prioritize binary variables over multi-categorical variable, as such the predictors created based on heuristics have been excluded. _[Figure 3]_ shows the results for Boruta on the original predictors. All of the original predictors were found to be significant with the exception of `veil_type` which as mentioned previously only had one categorization for all observations.  
+
+[^5]: [Feature Selection with the Boruta Package](https://www.jstatsoft.org/article/view/v036i11)
+
+On its own Boruta only serves to assist with feature selection.  For modeling features identified by Boruta are applied in a Logistic regression.  Figure 3 shows that there is a drop in VIM after the 3 most important predictors.  The model shows a marked improvement relative to the baseline with an accuracy of `r paste(round(smry_brtaLgt_01$overall['Accuracy']*100,2), '%', sep = '')`.
+
+Although only 4 attributes were utilized due to the high number of categories within those attributes it results in a model with `r length(coef(mdl_brtaLgt_01))-1` predictors, none of which are statistically significant.  This suggests there is room for additional feature engineering.  Details of the model can be seen in _[Table 4]_. 
+
+####  Recursive Feature Elimination
+
+```{r addDummies, warning=FALSE}
+# add previously created dummy variables to modeling
+dfMDLTrain <-
+  dfMDLTrain %>%
+  left_join(dfDataTrainDummy, by = 'index')
+
+# repeat for eval data
+dfMDLEval <- 
+  dfMDLEval %>% 
+  left_join(dfDataTrainDummy, by = 'index')
+
+```
+
+```{r checkForRdata}
+# due to long processing time and zombie processes created by DoParallel
+# use pre calculated RFE instead of running in line
+# rdata version produced using same code as in RFE chunk
+
+# check for RFE data
+lgcRFEData <- !any(grepl('RFE_results\\.RData', list.files(path = dataDir)))
+
+# if data exists load data and skip next chunk
+if(!lgcRFEData){load(file.path(dataDir, 'RFE_results.RData'))}
+```
+
+```{r recursiveFeatureSelection, warning=FALSE, eval=lgcRFEData}
+# identify total number of cores for processing
+cl <- makeCluster(detectCores(), type='PSOCK')
+registerDoParallel(cl)
+
+# specify desired model sizes
+subsetSizes <- c(2, 4, 6, 8)
+
+# create a list of subsets for iterative backward selection
+seeds <- vector(mode = "list", length = 51)
+for(i in 1:50) seeds[[i]] <- sample.int(1000, length(subsetSizes) + 1)
+
+# run RFE
+rfProfile <- rfe(
+  dfMDLTrain[, setdiff(colnames(dfMDLTrain), c('target', 'index'))],
+                 dfMDLTrain$target,
+                 sizes = subsetSizes,
+                 rfeControl =
+                   rfeControl(
+                     functions = rfFuncs
+                     , seeds = seeds
+                     , verbose = FALSE))
+
+# for comparison to the previous
+mdl_rfe_01 <- update(
+  rfProfile
+  , x = dfMDLTrain[, setdiff(colnames(dfMDLTrain), c('target', 'index'))]
+  , y = dfMDLTrain$target
+  , size = 4)
+
+# calculate summary stats of model on training data
+smry_rfe_01 <-
+caret::confusionMatrix(data = mdl_rfe_01$fit$predicted
+                       , ref = dfMDLTrain$target)
+
+# calculate summary stats of model on reserved eval data.
+eval_rfe_01 <-
+caret::confusionMatrix(
+  data =
+    predict(mdl_rfe_01$fit, dfMDLEval, type = 'response')
+  , ref = dfMDLEval$target)
+```
+
+Recursive Feature Elimination (RFE) has two components.  The first functions similar to Boruta in that it builds off of a Random Forest to establish VIM for each attribute. It then uses an an iterative processing running backward selection on subsets of the data. This combination makes this process more robust than Boruta when binary variables are present in addition to multicategory variables and reduces the chances of overfitting the training data.  Given the model produced by Boruta had no statistically significant predictors and RFE is more robust when dealing with a binary variables dummy variables for each category have been included as predictors.  A feature of RFE is the ability to constrain produce an optimal model for differing numbers of attributes, utilizing all attributes and dummy variables created for each category it is possible to achieve 100% accuracy, however 125 predictors is not realistic for an individual to internalize.  For a more direct comparison an optimal model was created using 4 attributes which resulted in a similar although marginally less accurate, `r paste(round(smry_rfe_01$overall['Accuracy']*100,2), '%', sep = '')`, model.  Additional details of the model can be seen in _[Table 6]_
+
+####  C5.0
+
+```{r c50, warning=FALSE, message=FALSE}
+# specify parameters for C5.0
+trControl <- trainControl(
+  method = "repeatedcv", number=10, repeats=5, verboseIter=FALSE)
+
+# train C5.0 classification
+mdl_c50_01 <- train(
+  target ~ .
+  , data = dfMDLTrain[, setdiff(colnames(dfMDLTrain), c('index'))]
+  ,method ="C5.0Rules", trControl = trControl, metric = 'Accuracy')
+
+# review results
+# summary(mdl_c50_01)
+
+# calculate summary stats of model on training data
+smry_c50_01 <-
+  caret::confusionMatrix(
+    data = predict(mdl_c50_01, dfMDLTrain), ref = dfMDLTrain$target)
+
+# calculate summary stats of model on reserved eval data.
+eval_c50_01 <-
+  caret::confusionMatrix(
+    data = predict(mdl_c50_01, dfMDLEval), ref = dfMDLEval$target)
+```
+
+The preceding models have a couple of issues. First, due to the number of predictors neither is something that a novice forager is likely to be remember. Second, which is a much larger issue is that while both of these model are capable of achieving a perfect accuracy on edible mushrooms, both fall short on poisonous mushrooms.  While not all poisonous mushrooms are so toxic that they are deadly the risk associated with a false negative for a poisonous mushroom is much greater than for an edible mushroom.  Both of these can be resolved with the C5.0 algorithm.
+
+Despite being built on top of Random Forest neither Boruta or RFE are particularly capable at evaluating interactions between predictors.  C5.0 is a decision tree regression algorithm which makes heavy use of sub-trees to evaluate splits and recursion over partitions in the data to evaluate the information gain from these splits.  Additionally C5.0 is capable of using these sub-trees to create a set of rules to follow to classify the response variable from the predictors.  Running C5.0 on all the predictors produces a model with `r paste(round(smry_c50_01$overall['Accuracy']*100,2), '%', sep = '')` accuracy and only 6 rules. Additional information about the model can be found in _[Table 7]_
+
+### Evaluation & results
+
+The table below compares the accuracy for all three models across the training and reserved evaluation data.  While all three models achieve 100% accuracy on the positive (edible) mushrooms both the Boruta and RFE based models fail to accurately classify the negative (poisonous) mushrooms.  While all three models are reasonably accurate given the risk associated with a false negative for a poisonous mushroom C5.0 is the clear winner.  Additionally, C5.0 uses the fewest predictors to achieve its accuracy and provides clear rules a forager can follow to classify the mushrooms they encounter.
+
+```{r tblModel, results='asis'}
+data.frame(Model = c('Boruta Logit', 'Recursive Feature', 'C5.0 class')
+           , Predictors = c(18, 18, 6)
+           , Train_Accuracy = c(smry_brtaLgt_01$overall[c('Accuracy')]
+                          , smry_rfe_01$overall[c('Accuracy')]
+                          , smry_c50_01$overall[c('Accuracy')])
+           , Train_Acc_pos. = 
+             c(smry_brtaLgt_01$byClass[c('Pos Pred Value')]
+               , smry_rfe_01$byClass[c('Pos Pred Value')]
+               , smry_c50_01$byClass[c('Pos Pred Value')])
+           , Train_Acc_neg. = 
+             c(smry_brtaLgt_01$byClass[c('Neg Pred Value')]
+               , smry_rfe_01$byClass[c('Neg Pred Value')]
+               , smry_c50_01$byClass[c('Neg Pred Value')])
+           , Eval_Accuracy = c(eval_brtaLgt_01$overall[c('Accuracy')]
+                          , eval_rfe_01$overall[c('Accuracy')]
+                          , eval_c50_01$overall[c('Accuracy')])
+           , Eval_Accy_pos. = 
+             c(eval_brtaLgt_01$byClass[c('Pos Pred Value')]
+               , eval_rfe_01$byClass[c('Pos Pred Value')]
+               , eval_c50_01$byClass[c('Pos Pred Value')])
+           , Eval_Acc_neg. = 
+             c(eval_brtaLgt_01$byClass[c('Neg Pred Value')]
+               , eval_rfe_01$byClass[c('Neg Pred Value')]
+               , eval_c50_01$byClass[c('Neg Pred Value')])
+           , stringsAsFactors = FALSE) %>% 
+  t() %>% 
+  pandoc.table(missing = '')
+```
+
+#### Rules
+
+Below are a list of the rules provided by the C5.0 model.  While the model explicitly defines 6 since rules 5 and 6 are dependent on evaluating 1 and 2 there a forager can safely evaluate toxicity of mushrooms with only 3 rules.
+
+  1. Does it smell or smells like something other than anise or almond? It is poisonous.  
+  2. If it has green spores, it is poisonous
+  3. If no smell, does the surface below the ring is scaly and the color above the ring is brown? It is poisonous.
+  4. Is it in the leaves and have bruises?  It is poisonous
+  5. Is it in leaves and adheres to rules 1 & 2?  It is edible.
+  6. Does it have bruises adhere to rule 1 & 3? It is edible
+
+# Conclusion and future work
+
+The C5.0 model provides the best results with the most actionable model.  While this model is actionable it may not be providing a complete idea of what mushrooms are edible.  The description of the data explains that any mushroom which was not explicitly classified as edible in the Audubon Society Field Guide were classified as poisonous.  Future work could include rerunning the C5.0 classification on the original data from the field guide treating the unclassified mushrooms as a third distinct category to see how this effects the rules provided.
+
+# Appendix
+
+## Supplemental materials
+
+#### Table 1
+
+_Comparison of predictor category proportions by response classification_
+
+```{r table_01, results='asis'}
+# print markdown cross tab table of response against predictors
+summary(catTable)
+```
+
+#### Figure 2
+
+```{r Figure_02, warning=FALSE, fig.height=8}
+# dodged bar plot of all predictors split by target classification
+# display plot
+pltDdgBar
+
+```
+
+#### Figure 3
+
+```{r Figure_03}
+plot(tstBoruta, main = 'Boruta feature selection'
+     , sub = 'Original predictors')
+```
+
+#### Table 4
+
+_Logistic Regression with top 3 predictors identified by Boruta_
+
+```{r table_04}
+summary(mdl_brtaLgt_01)
+
+smry_brtaLgt_01
+```
+
+#### Figure 5
+
+```{r figure_05}
+# compare accuracy of Recursive Feature Elimination models
+# plot(mdl_rfe_01, main = 'Recursive feature elimination model performance'
+#      , sub = 'solid dot signifies model used')
+```
+
+#### Table 6
+
+_RFE model details_
+
+```{r table_06}
+smry_rfe_01
+```
+
+#### Table 7
+
+_C5.0 classification model details_
+
+```{r table_07}
+summary(mdl_c50_01)
+
+smry_c50_01
+```
+
+## R source code
+
+See included Rmarkdown (rmd) document
+
+## Session info
+
+```{r sysTools, echo=FALSE, results='asis'} 
+# produce list of system environment 
+lstSession <- devtools::session_info() 
+
+# extract operating system data and store in table
+as.data.frame(do.call(rbind, lstSession[['platform']])) %>%  
+  rownames_to_column() %>%  
+  rename(` ` = rowname, details = V1) %>%  
+  pandoc.table() 
+
+# create pandoc table of packages
+pandoc.table(lstSession$packages) 
+
+```
+
+```{r packCite, include=FALSE, eval=FALSE, message=FALSE} 
+# write all package citations to bib file 
+knitr::write_bib(lstSession[['packages']]$package
+                 , file = file.path(dirname(dataDir), 'packages.bib'))
+
+``` 
+
+# References
