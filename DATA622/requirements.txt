@@ -1,0 +1,11 @@
+kaggle
+pandas
+matplotlib
+scipy
+seaborn
+numpy
+sklearn
+missingpy
+category_encoders
+scikit-learn>=0.20.3
+missingpy>=0.2.0
