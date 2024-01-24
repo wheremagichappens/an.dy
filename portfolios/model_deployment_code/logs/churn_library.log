@@ -1,0 +1,14 @@
+root - INFO - Testing import_data: SUCCESS
+root - INFO - Testing import_data: SUCCESS
+numexpr.utils - INFO - Note: NumExpr detected 12 cores but "NUMEXPR_MAX_THREADS" not set, so enforcing safe limit of 8.
+numexpr.utils - INFO - NumExpr defaulting to 8 threads.
+root - INFO - SUCCESS: All of EDA images are saved in the correct file path!
+root - INFO - Testing import_data: SUCCESS
+root - INFO - SUCCESS: All encoded categorical columns exist!
+root - INFO - Testing import_data: SUCCESS
+root - INFO - SUCCESS: All encoded categorical columns exist!
+root - INFO - SUCCESS: All train/test sets match in terms of length!
+root - INFO - Testing import_data: SUCCESS
+root - INFO - SUCCESS: All encoded categorical columns exist!
+root - INFO - SUCCESS: All train/test sets match in terms of length!
+root - INFO - SUCCESS: All models are saved in the correct file path!
