@@ -1,90 +1,273 @@
-# Predicting Customer Disengagement & Evaluating Targeted Interventions
 
-This repo is a small, **end-to-end applied ML system**: ETL → labeling → training → scoring → intervention evaluation → monitoring.
-It’s designed to look and feel like a production-style Applied Scientist project (batch pipeline + artifacts + drift checks).
+# Customer Churn Intervention with Causal Inference  
+**End-to-End Applied ML, Experimentation, and Incrementality (Production-Style)**
 
-## What this does
-- Builds customer-level behavioral features from transaction logs
-- Defines a leakage-safe churn label (no purchase in the next 30 days after a snapshot date)
-- Trains baseline models (Logistic Regression + Gradient Boosting)
-- Scores customers and creates a “high-risk” segment (top 20%)
-- Evaluates intervention ROI + a holdout-style causal lift estimate
-- Monitors feature drift + score stability (PSI) and flags retraining
+---
 
-## Data
-This project expects a CSV at:
-- `data/raw/online_retail.csv`
+## Executive Summary
 
-It’s compatible with UCI Online Retail / Online Retail II style columns:
-- `CustomerID`, `InvoiceDate`, `InvoiceNo`, `Quantity`, `UnitPrice`, `StockCode`, `Country`
+This repository implements a **production-style churn intervention pipeline** designed to answer a core business question:
 
-> Note: the repo does **not** include the dataset (license/size). Drop your CSV into `data/raw/online_retail.csv`.
+> **If we intervene on high-risk customers, does it *causally* reduce churn — and is the impact worth the cost?**
 
-## Quickstart
+Unlike typical churn projects that stop at prediction, this system integrates:
+- Predictive churn modeling (who is at risk)
+- Targeting and intervention logic (who to act on)
+- Causal inference (did the action *cause* improvement?)
+- ROI-based decision-making (should we roll out?)
+- Monitoring for deployment readiness
 
-1) Create a venv and install deps:
+The overall design mirrors **marketplace and growth experimentation workflows** used at companies such as **Uber, DoorDash, and Thumbtack**, where decisions must be **incremental and causal**, not correlational.
+
+---
+
+## Repository Structure (Source of Truth)
+
+```text
+customer-churn-intervention-ml/
+├── README.md
+├── requirements.txt
+├── run_pipeline.sh
+├── Makefile
+│
+├── data/
+│   ├── raw/
+│   │   └── online_retail.csv
+│   └── processed/
+│       ├── customer_features_labeled.csv
+│       └── country_week_panel.csv
+│
+├── etl/
+│   └── build_customer_table.py
+│
+├── labels/
+│   └── build_churn_label.py
+│
+├── models/
+│   ├── train_model.py
+│   └── score_customers.py
+│
+├── evaluation/
+│   ├── intervention_analysis.py
+│   └── causal_checks.py
+│
+├── causal/
+│   ├── cuped_analysis.py
+│   ├── build_country_panel.py
+│   ├── diff_in_diff.py
+│   └── parallel_trends_plot.py
+│
+├── monitoring/
+│   ├── data_drift.py
+│   └── score_stability.py
+│
+└── artifacts/
+    ├── models/
+    ├── metrics/
+    └── monitoring/
+```
+
+This README references **only files that actually exist in the project**.
+
+---
+
+## End-to-End Data & Decision Flow
+
+```text
+Raw transactions
+(data/raw/online_retail.csv)
+        │
+        ▼
+ETL & feature engineering
+(etl/build_customer_table.py)
+        │
+        ▼
+Customer features + pre-period metrics
+(data/processed/customer_features_labeled.csv)
+        │
+        ▼
+Churn labeling (leakage-safe)
+(labels/build_churn_label.py)
+        │
+        ▼
+Churn risk model
+(models/train_model.py)
+        │
+        ▼
+Risk scoring
+(models/score_customers.py)
+        │
+        ▼
+Targeting + holdout assignment
+(evaluation/causal_checks.py)
+        │
+        ▼
+Causal inference layer
+├─ Holdout lift (evaluation/causal_checks.py)
+├─ CUPED variance reduction (causal/cuped_analysis.py)
+└─ DiD, market-level (causal/diff_in_diff.py)
+        │
+        ▼
+ROI-informed decision + monitoring
+(monitoring/data_drift.py,
+ monitoring/score_stability.py)
+```
+
+---
+
+## Dataset
+
+**Source:** UCI Machine Learning Repository — *Online Retail Dataset*
+
+**Why this dataset is appropriate**
+- Real transactional data (not synthetic)
+- Time-stamped events enable pre/post analysis
+- Multiple aggregation levels (customer, country)
+- Supports both randomized and quasi-experimental designs
+
+**Placement (not committed to Git):**
+```text
+data/raw/online_retail.csv
+```
+
+---
+
+## Churn Modeling (Prediction ≠ Decision)
+
+Customer-level features include:
+- Recency (days since last purchase)
+- Frequency (purchase count)
+- Monetary value (spend)
+- Pre-period behavioral metrics
+
+Churn labels are constructed in a **forward-looking, leakage-safe** manner:
+```text
+labels/build_churn_label.py
+```
+
+A baseline churn model is trained and scored:
+```text
+models/train_model.py
+models/score_customers.py
+```
+
+**Important:**  
+The churn model is used **only for targeting** — not for claiming business impact.
+
+---
+
+## Causal Inference: Measuring Incrementality
+
+### 1. Holdout-Based Incrementality (User-Level)
+
+High-risk customers are split into:
+- **Treatment**: receive intervention
+- **Control (holdout)**: receive nothing
+
+Incremental effect:
+```
+Retention_treatment − Retention_control
+```
+
+Implemented in:
+```text
+evaluation/causal_checks.py
+```
+
+This removes bias from:
+- Regression to the mean
+- Natural recovery
+- Seasonality
+
+---
+
+### 2. CUPED (Variance Reduction)
+
+To detect lift faster and more reliably, the pipeline applies **CUPED**, conditioning on pre-period behavior.
+
+Implemented in:
+```text
+causal/cuped_analysis.py
+```
+
+This mirrors variance-reduction techniques used in large-scale experimentation platforms.
+
+---
+
+### 3. Difference-in-Differences (Market-Level)
+
+When user-level randomization is not feasible (e.g., market rollouts), the pipeline switches to DiD:
+
+Steps:
+1. Build a country × week panel  
+   (`causal/build_country_panel.py`)
+2. Estimate DiD with fixed effects  
+   (`causal/diff_in_diff.py`)
+3. Validate assumptions via parallel trends  
+   (`causal/parallel_trends_plot.py`)
+
+---
+
+## Outputs
+
+Key artifacts produced by the pipeline:
+
+```text
+artifacts/
+├── models/
+│   └── churn_model.pkl
+├── metrics/
+│   ├── cuped_results.csv
+│   ├── did_results.csv
+│   └── parallel_trends_plot.png
+└── monitoring/
+    ├── feature_drift.csv
+    └── score_stability.csv
+```
+
+These outputs are designed to support **go / no-go rollout decisions**, not just model evaluation.
+
+---
+
+## Assumptions & Limitations
+
+- The dataset does not include a real intervention flag
+- Treatment assignment is simulated for demonstration
+- Causal estimates are illustrative, not production claims
+
+The emphasis is on **correct experimental design, assumptions, and decision logic**.
+
+---
+
+## How to Run
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
 
-2) Put your dataset at `data/raw/online_retail.csv`
+# Place dataset
+data/raw/online_retail.csv
 
-3) Run the full pipeline:
-```bash
 chmod +x run_pipeline.sh
 ./run_pipeline.sh
 ```
 
-Or run stage-by-stage:
-```bash
-make all
-```
+---
 
-## Outputs
-- Processed tables:
-  - `data/processed/customer_features.csv`
-  - `data/processed/customer_features_labeled.csv`
-  - `data/processed/scored_customers.csv`
-- Model artifacts:
-  - `artifacts/models/logreg.joblib`
-  - `artifacts/models/gbm.joblib`
-- Metrics:
-  - `artifacts/metrics/logreg.json`
-  - `artifacts/metrics/gbm.json`
-  - `artifacts/metrics/intervention_roi_summary.csv`
-  - `artifacts/metrics/holdout_causal_check.csv`
-- Monitoring:
-  - `artifacts/monitoring/feature_drift_report.csv`
-  - `artifacts/monitoring/score_stability_report.csv`
+## Intended Audience
 
-## Repo structure
-```text
-etl/            # Data preparation
-labels/         # Churn labeling
-models/         # Training & scoring
-evaluation/     # ROI & causal checks
-monitoring/     # Drift & stability monitoring
-artifacts/      # Saved models & metrics
-data/           # Raw + processed data
-```
+- Marketplace / Growth Data Scientists
+- Experimentation & Causal Inference roles
+- Applied ML portfolios focused on business impact
 
-## Notes / next upgrades
-- Replace simulated holdout with real experiment assignment + logged exposures
-- Add time-based split (train on earlier, validate on later)
-- Add retraining scheduler (cron / Airflow) and artifact versioning
+---
 
+## Why This Project Matters
 
-## Causal inference (Uber-style)
-This repo includes:
-- **Holdout causal check** (high-risk segment) in `evaluation/causal_checks.py`
-- **CUPED variance reduction** in `causal/cuped_analysis.py`
-- **Difference-in-Differences** using a country×week panel in `causal/diff_in_diff.py`
-- **Parallel trends plot** in `causal/parallel_trends_plot.py`
+This project demonstrates the difference between:
+- **Predicting risk**
+- **Measuring causal impact**
+- **Making defensible business decisions**
 
-## Dataset
-Place the UCI Online Retail dataset (converted to CSV) at:
-- `data/raw/online_retail.csv`
-
-The raw dataset is gitignored by default.
+That distinction is critical in real-world data science.
