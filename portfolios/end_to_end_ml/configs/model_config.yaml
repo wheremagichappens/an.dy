@@ -1,0 +1,7 @@
+snapshot_date: "2011-12-01"
+churn_window_days: 30
+high_risk_percentile: 0.80
+offer_cost_per_user: 2.00
+incremental_margin: 0.30
+holdout_rate: 0.20
+psi_threshold: 0.20
