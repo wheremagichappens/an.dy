@@ -1,0 +1,1 @@
+Matched 367 treated-control user pairs. Estimated incremental lift was 0.55 weekly trips (95% CI: 0.45 to 0.64, p-value=0.0000). Pre-treatment trends were not significantly different, supporting the parallel trends assumption.

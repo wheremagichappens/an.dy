@@ -1,0 +1,13 @@
+{
+  "matched_pairs": 367,
+  "did_effect": 0.5453970416504479,
+  "did_pvalue": 2.5614389951219464e-29,
+  "did_ci_lower": 0.4503033501484469,
+  "did_ci_upper": 0.6404907331524489,
+  "pretrend_coef": 0.0040123364374044165,
+  "pretrend_pvalue": 0.5944625555162151,
+  "parallel_trends_supported": true,
+  "all_features_balanced": true,
+  "max_abs_smd": 0.034592828214984,
+  "business_readout": "Matched 367 treated-control user pairs. Estimated incremental lift was 0.55 weekly trips (95% CI: 0.45 to 0.64, p-value=0.0000). Pre-treatment trends were not significantly different, supporting the parallel trends assumption."
+}

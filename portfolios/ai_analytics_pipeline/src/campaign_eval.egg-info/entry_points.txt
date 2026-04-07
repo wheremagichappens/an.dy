@@ -1,0 +1,2 @@
+[console_scripts]
+campaign-eval = campaign_eval.cli:main
